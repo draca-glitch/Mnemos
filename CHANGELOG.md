@@ -20,53 +20,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [10.0.2] - 2026-04-15 (LoCoMo benchmark + framing softening)
-
-### Added
-- **LoCoMo retrieval-recall benchmark** (`benchmarks/locomo_bench.py`): runs
-  the same hybrid pipeline against the [LoCoMo](https://github.com/snap-research/locomo)
-  dataset (Maharana et al., ACL 2024). 10 conversations, 19-32 sessions
-  each, 1,986 QA pairs across 5 categories. Methodology guardrails baked
-  in: top-K capped at 10 (smallest LoCoMo conversation has 19 sessions,
-  so K below that means retrieval is doing real work), adversarial-by-
-  design questions in category 5 (446 items) excluded from R@K with the
-  same convention LongMemEval uses for abstention, per-conversation
-  session counts published alongside the result for verification.
-  Three modes shipped with results:
-  - `hybrid`:               R@5 = 84.7%, R@10 = 94.0%
-  - `hybrid --cml`:         R@5 = 79.4%, R@10 = 91.0%
-  - `hybrid+rerank --cml`:  R@5 = 86.1%, R@10 = 91.9%
-  The `hybrid+rerank` mode (no CML) is documented as not-recommended on
-  LoCoMo: median session length is 2,652 chars, p90 4,090 chars, the
-  Jina cross-encoder cannot see a whole session at once when scoring
-  relevance, and aggressive truncation cuts off the very evidence the
-  cross-encoder was supposed to read. CML preprocessing (sessions
-  compressed to ~500 chars of dense facts) is the prerequisite for
-  effective reranking on long-session benchmarks; the `hybrid+rerank
-  --cml` row is the configuration that pairs the cross-encoder with
-  text it can see in full. Conv-26 control data point: full-text rerank
-  scored 78.0% R@5 vs `hybrid` 86.0% on the same conversation.
-- LoCoMo dataset (`benchmarks/locomo10.json`, 2.8MB) committed for
-  reproducibility (the dataset is small enough to ship; LongMemEval
-  remains downloadable-on-demand because it is much larger).
-- LoCoMo section in `benchmarks/README.md` (full methodology + per-
-  category breakdown + interpretation) and a brief headline section in
-  the main README right after LongMemEval's results.
-- Top-of-README benchmark intro updated to list five metric classes
-  (LongMemEval R@K + LoCoMo R@K + LongMemEval QA + consolidation
-  quality + CML fidelity) instead of three.
-
-### Changed
-- Top-of-README "Benchmarked" feature bullet softened: removed the
-  comparative claim ("Matches or exceeds every reproducible retrieval-
-  recall number I have been able to verify from other public memory
-  systems") and the inline MemPalace re-attribution. The Mnemos
-  numbers stand on their own; the comparative framing in the Origin
-  section's table is the only place head-to-head numbers appear.
-
----
-
-## [10.0.1] - 2026-04-15 (single-flag CML opt-out)
+## [10.0.1] - 2026-04-15 (single-flag CML opt-out + LoCoMo benchmark)
 
 ### Added
 - **`MNEMOS_CML_MODE` environment variable**, the unified switch that the
@@ -97,10 +51,48 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   `mnemos/consolidation/prompts.py` (`MERGE_SYSTEM_PROSE`,
   `SYNTHESIS_SYSTEM_PROSE`) that preserve the same atomic-fact-preservation
   rules as the CML variants with natural-language output format.
+- **LoCoMo retrieval-recall benchmark** (`benchmarks/locomo_bench.py`): runs
+  the same hybrid pipeline against the [LoCoMo](https://github.com/snap-research/locomo)
+  dataset (Maharana et al., ACL 2024). 10 conversations, 19-32 sessions
+  each, 1,986 QA pairs across 5 categories. Methodology guardrails baked
+  in: top-K capped at 10 (smallest LoCoMo conversation has 19 sessions,
+  so K below that means retrieval is doing real work), adversarial-by-
+  design questions in category 5 (446 items) excluded from R@K with the
+  same convention LongMemEval uses for abstention, per-conversation
+  session counts published alongside the result for verification.
+  Three modes shipped with results:
+  - `hybrid`:               R@5 = 84.7%, R@10 = 94.0%
+  - `hybrid --cml`:         R@5 = 79.4%, R@10 = 91.0%
+  - `hybrid+rerank --cml`:  R@5 = 86.1%, R@10 = 91.9%
+  The `hybrid+rerank` mode (no CML) is documented as not-recommended on
+  LoCoMo: median session length is 2,652 chars, p90 4,090 chars, the
+  Jina cross-encoder cannot see a whole session at once when scoring
+  relevance, and aggressive truncation cuts off the very evidence the
+  cross-encoder was supposed to read. CML preprocessing (sessions
+  compressed to ~500 chars of dense facts) is the prerequisite for
+  effective reranking on long-session benchmarks; the `hybrid+rerank
+  --cml` row is the configuration that pairs the cross-encoder with
+  text it can see in full. Conv-26 control data point: full-text rerank
+  scored 78.0% R@5 vs `hybrid` 86.0% on the same conversation.
+- LoCoMo dataset (`benchmarks/locomo10.json`, 2.8MB) committed for
+  reproducibility (the dataset is small enough to ship; LongMemEval
+  remains downloadable-on-demand because it is much larger).
+- LoCoMo section in `benchmarks/README.md` (full methodology + per-
+  category breakdown + interpretation) and a brief headline section in
+  the main README right after LongMemEval's results.
 
 ### Changed
 - README "Soft convention, hard rewards" callout updated from "Planned" to
   document the now-implemented switch and its exact per-surface effects.
+- Top-of-README benchmark intro updated to list five metric classes
+  (LongMemEval R@K + LoCoMo R@K + LongMemEval QA + consolidation
+  quality + CML fidelity) instead of three.
+- Top-of-README "Benchmarked" feature bullet softened: removed the
+  comparative claim ("Matches or exceeds every reproducible retrieval-
+  recall number I have been able to verify from other public memory
+  systems") and the inline MemPalace re-attribution. The Mnemos numbers
+  stand on their own; the comparative framing in the Origin section's
+  table is the only place head-to-head numbers appear.
 
 ---
 
