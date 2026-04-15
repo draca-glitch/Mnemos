@@ -38,7 +38,7 @@ That result is what tipped this from "private side project I had no plans to sha
 
 > **A note on scope.** Mnemos is a personal memory system. It is not trying to compete with production-grade multi-tenant memory services like [Mastra](https://mastra.ai), [Mem0](https://mem0.ai), [Supermemory](https://supermemory.ai), [Hindsight](https://hindsight.ai), and the other commercial systems in this space. Those are built for teams, hosted APIs, enterprise SLAs, and commercial support contracts, and Mnemos will not hold a candle to them on that axis. **For personal Claude (or any MCP-compatible AI) memory on a single machine, though, it is more than enough, and that is the audience it is built for.** If you are running memory for a support-agent fleet with thousands of customers, reach for one of the commercial options instead. The benchmark comparisons below are about the retrieval-recall axis specifically, the one axis where a personal tool and a multi-tenant service can meaningfully be measured against each other, not a claim that Mnemos replaces what they do.
 
-I am comparing against MemPalace specifically because they are, by their own account and by the articles written about them, the current number one in the AI memory space. If you are going to benchmark yourself, you benchmark against whoever is on top. This is not personal; it is just how comparisons work. Here is how the two systems actually stack up:
+I am comparing against MemPalace specifically because they are, by their own account and by the articles written about them, the current number one in the AI personal memory space. If you are going to benchmark yourself, you benchmark against whoever is on top. This is not personal; it is just how comparisons work. Here is how the two systems actually stack up:
 
 |                              | MemPalace | **Mnemos** |
 |---|---|---|
@@ -935,7 +935,7 @@ Mnemos is MIT-licensed and developed by one person on a home server, in spare ti
 
 Sponsorship goes directly toward keeping the development server running and toward more time spent improving Mnemos instead of doing my day job. Nothing you sponsor unlocks paid features. Mnemos stays one piece of software, fully open source, with everything in the public repo.
 
-I published this because I suddenly realized other people might actually want it too, after reading articles about the AI memory space, not just me. As I mentioned at the start of this README, I originally had no plan to release Mnemos at all; it was just my own infrastructure for my own use. But here we are, because at some point I thought *why not*. Everything in this repository is open, honest, and straightforward. If you do not want to use it, do not. If you do, I hope it serves you at least a fraction of the way it has served me.
+I published this because I suddenly realized other people might actually want it too, after reading articles about the AI personal memory space, not just me. As I mentioned at the start of this README, I originally had no plan to release Mnemos at all; it was just my own infrastructure for my own use. But here we are, because at some point I thought *why not*. Everything in this repository is open, honest, and straightforward. If you do not want to use it, do not. If you do, I hope it serves you at least a fraction of the way it has served me.
 
 ## License
 
