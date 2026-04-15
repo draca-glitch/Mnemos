@@ -125,4 +125,4 @@ You have access to Mnemos via four MCP tools: `memory_store`, `memory_search`,
 
 ## A note on system-prompt scope
 
-Mnemos can only instruct the AI through the MCP tool descriptions it exposes. `MNEMOS_CML_MODE` controls those and the Nyx cycle prompts, which is everything Mnemos *owns*. Your project's `CLAUDE.md` (or equivalent) is **yours to manage** — Mnemos has no way to rewrite it when you flip the mode. If you switch between CML and prose deployments, swap the corresponding block above into your agent-rules file.
+Mnemos can only instruct the AI through the MCP tool descriptions it exposes. `MNEMOS_CML_MODE` controls those and the Nyx cycle prompts, which is everything Mnemos *owns*. Your project's `CLAUDE.md` (or equivalent) is **yours to manage**; Mnemos has no way to rewrite it when you flip the mode. If you switch between CML and prose deployments, swap the corresponding block above into your agent-rules file.
