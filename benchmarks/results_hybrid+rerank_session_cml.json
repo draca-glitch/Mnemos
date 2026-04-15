@@ -1,0 +1,59 @@
+{
+  "mode": "hybrid+rerank",
+  "cml_conversion": true,
+  "granularity": "session",
+  "completed_at": "2026-04-11T00:59:33+02:00",
+  "notes": "Canonical Mnemos: CML normalization + hybrid retrieval + Jina v2 cross-encoder reranker. This is the configuration the system was designed to run in and the one I use in production. CML conversion is applied once at storage time using Claude Haiku 4.5 via DO Gradient API (cached on disk by SHA256, so re-runs are free); after that, the search path is identical to the no-CML hybrid+rerank benchmark and contains zero LLM calls of any kind. The reranker is a discriminative scorer, not a generative language model. First run, no parameter tuning, no thresholds swept, no models swapped. Four full categories at 100% R@5: knowledge-update (72/72), multi-session (121/121), single-session-user (64/64), single-session-assistant (56/56). Total of 313 questions in a row with zero retrieval mistakes. Only 4 misses across all 470 non-abstention questions.",
+  "recall": {
+    "1": 0.9574468085106383,
+    "3": 0.9872340425531915,
+    "5": 0.9914893617021276,
+    "10": 0.9914893617021276
+  },
+  "ndcg": {
+    "5": 0.977706800243055,
+    "10": 0.9770285219341502
+  },
+  "per_type": {
+    "single-session-user": {
+      "1": 0.96875,
+      "3": 1.0,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "multi-session": {
+      "1": 1.0,
+      "3": 1.0,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "single-session-preference": {
+      "1": 0.8,
+      "3": 0.9333333333333333,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "temporal-reasoning": {
+      "1": 0.9133858267716536,
+      "3": 0.9763779527559056,
+      "5": 0.9763779527559056,
+      "10": 0.9763779527559056
+    },
+    "knowledge-update": {
+      "1": 1.0,
+      "3": 1.0,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "single-session-assistant": {
+      "1": 0.9285714285714286,
+      "3": 0.9821428571428571,
+      "5": 1.0,
+      "10": 1.0
+    }
+  },
+  "avg_time": 75.93142971130128,
+  "total_time": 35687.7719643116,
+  "questions_evaluated": 470,
+  "failures": 0
+}

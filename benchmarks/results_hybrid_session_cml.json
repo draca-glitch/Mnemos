@@ -1,0 +1,59 @@
+{
+  "mode": "hybrid",
+  "cml_conversion": true,
+  "granularity": "session",
+  "completed_at": "2026-04-11T00:59:30+02:00",
+  "notes": "Hybrid retrieval with CML normalization of stored memories, no reranker. CML is applied at storage time using Claude Haiku 4.5 via DO Gradient API (cached on disk by SHA256), then the same FTS5 + sqlite-vec + RRF pipeline as the no-CML lite mode runs. The bi-encoder is mildly out of distribution on CML's structural form (e5-large was trained on natural-language pairs), which is why this lite-mode-with-CML number sits slightly below the no-CML lite mode. The reranker more than rescues this gap in the canonical configuration.",
+  "recall": {
+    "1": 0.925531914893617,
+    "3": 0.9702127659574468,
+    "5": 0.9787234042553191,
+    "10": 0.9829787234042553
+  },
+  "ndcg": {
+    "5": 0.9552117480576083,
+    "10": 0.9500719957582537
+  },
+  "per_type": {
+    "single-session-user": {
+      "1": 1.0,
+      "3": 1.0,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "multi-session": {
+      "1": 0.9504132231404959,
+      "3": 0.9834710743801653,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "single-session-preference": {
+      "1": 0.5666666666666667,
+      "3": 0.7333333333333333,
+      "5": 0.7666666666666667,
+      "10": 0.8333333333333334
+    },
+    "temporal-reasoning": {
+      "1": 0.889763779527559,
+      "3": 0.968503937007874,
+      "5": 0.9763779527559056,
+      "10": 0.9763779527559056
+    },
+    "knowledge-update": {
+      "1": 0.9861111111111112,
+      "3": 1.0,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "single-session-assistant": {
+      "1": 0.9821428571428571,
+      "3": 1.0,
+      "5": 1.0,
+      "10": 1.0
+    }
+  },
+  "avg_time": 75.92049592758747,
+  "total_time": 35682.63308596611,
+  "questions_evaluated": 470,
+  "failures": 0
+}

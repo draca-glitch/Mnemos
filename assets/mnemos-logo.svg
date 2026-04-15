@@ -1,0 +1,113 @@
+<svg width="1024" height="1024" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="strongGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="blur1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <linearGradient id="mnemoGold" x1="120" y1="80" x2="392" y2="432" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFE9A6"/>
+      <stop offset="35%" stop-color="#F4D97A"/>
+      <stop offset="70%" stop-color="#DDBA54"/>
+      <stop offset="100%" stop-color="#B98B2F"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Dark rounded frame -->
+  <rect x="8" y="8" width="496" height="496" rx="72" fill="#05070B"/>
+
+  <!-- Outer circular sigil -->
+  <circle cx="256" cy="256" r="170" fill="none" stroke="url(#mnemoGold)" stroke-width="2.2" opacity="0.95"/>
+  <circle cx="256" cy="256" r="152" fill="none" stroke="url(#mnemoGold)" stroke-width="1.6" opacity="0.78"/>
+
+  <!-- Vertical axis -->
+  <line x1="256" y1="48" x2="256" y2="464" stroke="url(#mnemoGold)" stroke-width="1.8" opacity="0.95"/>
+
+  <!-- Top / bottom starbursts -->
+  <g filter="url(#softGlow)">
+    <line x1="256" y1="34" x2="256" y2="62" stroke="url(#mnemoGold)" stroke-width="1.8"/>
+    <line x1="242" y1="48" x2="270" y2="48" stroke="url(#mnemoGold)" stroke-width="1.8"/>
+    <line x1="246" y1="38" x2="266" y2="58" stroke="url(#mnemoGold)" stroke-width="1.4"/>
+    <line x1="266" y1="38" x2="246" y2="58" stroke="url(#mnemoGold)" stroke-width="1.4"/>
+
+    <line x1="256" y1="450" x2="256" y2="478" stroke="url(#mnemoGold)" stroke-width="1.8"/>
+    <line x1="242" y1="464" x2="270" y2="464" stroke="url(#mnemoGold)" stroke-width="1.8"/>
+    <line x1="246" y1="454" x2="266" y2="474" stroke="url(#mnemoGold)" stroke-width="1.4"/>
+    <line x1="266" y1="454" x2="246" y2="474" stroke="url(#mnemoGold)" stroke-width="1.4"/>
+  </g>
+
+  <!-- Small axis nodes -->
+  <circle cx="256" cy="116" r="4" fill="url(#mnemoGold)" filter="url(#softGlow)"/>
+  <circle cx="256" cy="396" r="4" fill="url(#mnemoGold)" filter="url(#softGlow)"/>
+
+  <!-- Side sigil diamonds -->
+  <g transform="translate(60 256)" filter="url(#softGlow)">
+    <rect x="-4" y="-4" width="8" height="8" transform="rotate(45)" fill="none" stroke="url(#mnemoGold)" stroke-width="1.5"/>
+    <line x1="-10" y1="0" x2="-4" y2="0" stroke="url(#mnemoGold)" stroke-width="1.2"/>
+    <line x1="4" y1="0" x2="10" y2="0" stroke="url(#mnemoGold)" stroke-width="1.2"/>
+  </g>
+
+  <g transform="translate(452 256)" filter="url(#softGlow)">
+    <rect x="-4" y="-4" width="8" height="8" transform="rotate(45)" fill="none" stroke="url(#mnemoGold)" stroke-width="1.5"/>
+    <line x1="-10" y1="0" x2="-4" y2="0" stroke="url(#mnemoGold)" stroke-width="1.2"/>
+    <line x1="4" y1="0" x2="10" y2="0" stroke="url(#mnemoGold)" stroke-width="1.2"/>
+  </g>
+
+  <!-- M structure -->
+  <g stroke="url(#mnemoGold)" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" fill="none" filter="url(#softGlow)">
+    <!-- left vertical -->
+    <line x1="156" y1="164" x2="156" y2="322"/>
+    <!-- right vertical -->
+    <line x1="356" y1="164" x2="356" y2="322"/>
+
+    <!-- left top to center top -->
+    <line x1="156" y1="164" x2="256" y2="222"/>
+    <!-- center top to right top -->
+    <line x1="256" y1="222" x2="356" y2="164"/>
+
+    <!-- left top to center bottom -->
+    <line x1="156" y1="164" x2="256" y2="340"/>
+    <!-- center bottom to right top -->
+    <line x1="256" y1="340" x2="356" y2="164"/>
+  </g>
+
+  <!-- Mid side nodes -->
+  <g filter="url(#strongGlow)">
+    <circle cx="156" cy="164" r="13" fill="url(#mnemoGold)"/>
+    <circle cx="356" cy="164" r="13" fill="url(#mnemoGold)"/>
+
+    <circle cx="156" cy="243" r="10" fill="url(#mnemoGold)"/>
+    <circle cx="356" cy="243" r="10" fill="url(#mnemoGold)"/>
+
+    <circle cx="156" cy="322" r="10" fill="url(#mnemoGold)"/>
+    <circle cx="356" cy="322" r="10" fill="url(#mnemoGold)"/>
+
+    <circle cx="256" cy="222" r="11" fill="url(#mnemoGold)"/>
+    <circle cx="256" cy="340" r="16" fill="url(#mnemoGold)"/>
+  </g>
+
+  <!-- Tiny bright cores -->
+  <g>
+    <circle cx="156" cy="164" r="5" fill="#FFF7DD"/>
+    <circle cx="356" cy="164" r="5" fill="#FFF7DD"/>
+    <circle cx="156" cy="243" r="3.6" fill="#FFF7DD"/>
+    <circle cx="356" cy="243" r="3.6" fill="#FFF7DD"/>
+    <circle cx="156" cy="322" r="3.6" fill="#FFF7DD"/>
+    <circle cx="356" cy="322" r="3.6" fill="#FFF7DD"/>
+    <circle cx="256" cy="222" r="4" fill="#FFF7DD"/>
+    <circle cx="256" cy="340" r="6" fill="#FFF7DD"/>
+  </g>
+</svg>

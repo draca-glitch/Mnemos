@@ -1,0 +1,258 @@
+{
+  "corpus": "cml_fidelity_corpus.json",
+  "n_memories": 20,
+  "total_facts": 209,
+  "total_preserved": 205,
+  "overall_preservation_rate": 0.9809,
+  "average_compression_ratio": 0.692,
+  "per_memory": [
+    {
+      "id": "cfg-01",
+      "category": "config",
+      "prose_len": 391,
+      "cml_len": 234,
+      "compression_ratio": 0.598,
+      "n_original_facts": 14,
+      "n_preserved": 13,
+      "preservation_rate": 0.9286,
+      "dropped_facts": [
+        "Disk persistence is intentionally disabled on the primary"
+      ],
+      "cml_output": "F: redis-prod-a.internal:6380 TLS enabled; maxmemory 4GB allkeys-lru; replica redis-prod-b.internal async replication ~50ms lag; nightly backup 03:15 UTC offsite object store; RDB disabled, AOF off \u2235 p99 write latency <1ms requirement"
+    },
+    {
+      "id": "cfg-02",
+      "category": "config",
+      "prose_len": 356,
+      "cml_len": 272,
+      "compression_ratio": 0.764,
+      "n_original_facts": 12,
+      "n_preserved": 12,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "F: Postgres cluster db-prod-01; version 16.2; Ubuntu 24.04; data_dir=/var/lib/postgresql/16/main; WAL_archiving=on; archive_command\u2192/mnt/backup/pg-wal/ (NAS); shared_buffers=8GB; effective_cache_size=24GB; max_connections=200; pgbouncer@port:6432; pooling_mode=transaction"
+    },
+    {
+      "id": "dec-01",
+      "category": "decision",
+      "prose_len": 440,
+      "cml_len": 286,
+      "compression_ratio": 0.65,
+      "n_original_facts": 12,
+      "n_preserved": 12,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "D: sqlite-vec selected for Mnemos memory store (2026-02-13, v6 planning) \u2235 embedded, single-writer, zero-deployment vector search default; alternatives rejected: pgvector, Chroma, Weaviate (all require separate server process); Qdrant available as optional multi-node/higher-QPS backend"
+    },
+    {
+      "id": "dec-02",
+      "category": "decision",
+      "prose_len": 378,
+      "cml_len": 299,
+      "compression_ratio": 0.791,
+      "n_original_facts": 11,
+      "n_preserved": 11,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "F: embedding model \u25b3 Ollama Qwen3 \u2192 FastEmbed multilingual-e5-large @ 2026-02-15 v7.0; Qwen3: higher raw cosine (English), 4x slower CPU, poor Swedish support; e5-large: 1024-dim, ONNX, CPU-native, ~120 passages/sec on Ryzen 7 8-core; Swedish handling critical for production memory store \u2234 switched"
+    },
+    {
+      "id": "con-01",
+      "category": "contact",
+      "prose_len": 351,
+      "cml_len": 285,
+      "compression_ratio": 0.812,
+      "n_original_facts": 9,
+      "n_preserved": 9,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "C: Alex Johnson @ alex.johnson@dc-provider.example; weekdays 09:00\u201317:00 CET; primary ops contact, data center provider\nF: Escalation \u2192 ticket system, priority 2, tag 'ded-rack'\nF: Rack ID: A-12\nW: Avoid main support line for rack A-12 issues \u2235 will redirect; use ticket system instead"
+    },
+    {
+      "id": "pref-01",
+      "category": "preference",
+      "prose_len": 332,
+      "cml_len": 223,
+      "compression_ratio": 0.672,
+      "n_original_facts": 6,
+      "n_preserved": 6,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "P: tone=direct+playful in casual replies; no em dashes in writing projects (use hyphens or parentheses); suggested text blocks\u2192code fences (copyable); proactive style>cautious hedging; reviews\u2192honest opinions not validation"
+    },
+    {
+      "id": "pref-02",
+      "category": "preference",
+      "prose_len": 318,
+      "cml_len": 170,
+      "compression_ratio": 0.535,
+      "n_original_facts": 7,
+      "n_preserved": 7,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "P: email replies \u2192 3\u20135 sentences; casual tone; \u2717 AI-generated footers; Slack messages \u2192 1\u20132 sentences; long-form \u2713 for documentation & RFCs only, \u2717 routine correspondence"
+    },
+    {
+      "id": "fact-01",
+      "category": "fact",
+      "prose_len": 415,
+      "cml_len": 365,
+      "compression_ratio": 0.88,
+      "n_original_facts": 9,
+      "n_preserved": 8,
+      "preservation_rate": 0.8889,
+      "dropped_facts": [
+        "The address 0x0000111122223333444455556666777788889999 is illustrative and not a real address"
+      ],
+      "cml_output": "F: Ethereum wallet addr 0x0000111122223333444455556666777788889999; cold storage; hardware wallet firmware v2.1.0; seed phrase in steel backup capsule offsite\nP: use only for project transactions; never share outside project context\nF: separate hot wallet on different hardware device for personal trading\nW: protect seed phrase; maintain cold/hot wallet separation"
+    },
+    {
+      "id": "fact-02",
+      "category": "fact",
+      "prose_len": 272,
+      "cml_len": 223,
+      "compression_ratio": 0.82,
+      "n_original_facts": 9,
+      "n_preserved": 9,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "F: example-shop.com prod DB @ db-prod-01 MariaDB socket /var/run/mysqld/mysqld.sock; db=prod_shop user=shop_prod_rhclh7; staging db=test_shop same server; binlog format=ROW retention=7d size-cap=50GB rotation-trigger=oldest"
+    },
+    {
+      "id": "warn-01",
+      "category": "warning",
+      "prose_len": 349,
+      "cml_len": 260,
+      "compression_ratio": 0.745,
+      "n_original_facts": 8,
+      "n_preserved": 8,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "\u26a0 D: never run db:migrate:fresh against production; staging box test_shop has trigger prevent_fresh (raises exception), production lacks it; prior incident lost 12 hours customer messages via wrong --env flag; \u2234 always verify APP_ENV before any migrate command"
+    },
+    {
+      "id": "learn-01",
+      "category": "learning",
+      "prose_len": 381,
+      "cml_len": 299,
+      "compression_ratio": 0.785,
+      "n_original_facts": 9,
+      "n_preserved": 9,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "F: Jina rerank-v2 cross-encoder; trained on query-document pairs; outputs raw logits (not calibrated probabilities) \u2192 apply sigmoid(raw) to normalize; F: DEDUP_RERANK_THRESHOLD = 0.55 (sigmoid-normalized); empirical: score \u2265 0.55 = duplicate, < 0.55 = noise; F: threshold defined in mnemos.constants"
+    },
+    {
+      "id": "learn-02",
+      "category": "learning",
+      "prose_len": 411,
+      "cml_len": 287,
+      "compression_ratio": 0.698,
+      "n_original_facts": 8,
+      "n_preserved": 8,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "D: topic-level merge clusters (cosine 0.75\u20130.88) require stricter guard rails than near-duplicate clusters (>0.88) \u2235 LLM over-generalizes & drops specifics on loose inputs; F: hierarchical binary merge (v10) mitigates via pairwise-only merging \u2234 'output \u2248 one input size' intuition holds"
+    },
+    {
+      "id": "runbook-01",
+      "category": "runbook",
+      "prose_len": 373,
+      "cml_len": 374,
+      "compression_ratio": 1.003,
+      "n_original_facts": 11,
+      "n_preserved": 11,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "D: qdrant API key rotation procedure; F: generate via `openssl rand -hex 32`; F: write to /etc/qdrant/config.yaml @ service.api_key; F: `systemctl restart qdrant`; F: update MNEMOS_QDRANT_API_KEY in /etc/mnemos/env; F: `systemctl restart mnemos-mcp`; F: verify via `curl -H 'api-key: NEW' http://localhost:6333/collections`; W: old key remains valid until rotation completes"
+    },
+    {
+      "id": "fact-03",
+      "category": "fact",
+      "prose_len": 393,
+      "cml_len": 279,
+      "compression_ratio": 0.71,
+      "n_original_facts": 12,
+      "n_preserved": 11,
+      "preservation_rate": 0.9167,
+      "dropped_facts": [
+        "The longmemeval_s.json is described as \"cleaned\""
+      ],
+      "cml_output": "F: Mnemos LongMemEval benchmark; R@5 98.94% (hybrid+rerank, no CML) \u2192 99.15% (with CML) on 470 non-abstention questions from longmemeval_s.json (HuggingFace); end-to-end QA accuracy 77.4% (Sonnet answerer + Opus judge, full 500-question set); reproducible via benchmarks/ scripts"
+    },
+    {
+      "id": "fact-04",
+      "category": "fact",
+      "prose_len": 323,
+      "cml_len": 209,
+      "compression_ratio": 0.647,
+      "n_original_facts": 8,
+      "n_preserved": 8,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "F: FastEmbed e5-large; cold-start load ~9s; RAM usage ~2.1GB; inference throughput 120 passages/s (Ryzen 7 8-core + ONNX CPU); warm-up @ MCP server start; first memory_search post-boot ~15ms (model pre-loaded)"
+    },
+    {
+      "id": "narr-01",
+      "category": "narrative-learning",
+      "prose_len": 1023,
+      "cml_len": 624,
+      "compression_ratio": 0.61,
+      "n_original_facts": 13,
+      "n_preserved": 13,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "F: Stripe webhook integration attempted; signature verification failures occurred; root cause: raw request body required byte-for-byte for verification \u2235 FastAPI middleware pre-read body stream before webhook handler\nF: Solution: disable body parsing on /webhooks/stripe route via dependency override\nF: Initial hypotheses (incorrect): secret wrong; webhook URL stale\nF: Discovery method: Stripe docs review after 3-4 failed attempts; additional 1hr debugging\nL: Stripe signature verification requires unmodified raw request body; middleware body-reading breaks verification\nP: Document findings to prevent future forgetting"
+    },
+    {
+      "id": "narr-02",
+      "category": "narrative-decision",
+      "prose_len": 937,
+      "cml_len": 443,
+      "compression_ratio": 0.473,
+      "n_original_facts": 14,
+      "n_preserved": 13,
+      "preservation_rate": 0.9286,
+      "dropped_facts": [
+        "pgvector support is planned for later (not current release)."
+      ],
+      "cml_output": "D: vector store backend for Mnemos: stick with sqlite-vec as default; pgvector as optional backend \u2235 zero-deployment is feature for single-user system; sqlite-vec: rock solid, zero deployment (embedded in same SQLite file as memory data), sufficient at current scale (no multi-node search needed); pgvector: already running Postgres for app data, but adds maintenance overhead; decision prioritizes simplicity over infrastructure consolidation"
+    },
+    {
+      "id": "narr-03",
+      "category": "narrative-fact",
+      "prose_len": 930,
+      "cml_len": 450,
+      "compression_ratio": 0.484,
+      "n_original_facts": 13,
+      "n_preserved": 13,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "F: embedding pipeline (FastEmbed multilingual-e5-large) on Ryzen 7 8-core + 64GB ECC RAM; cold start load ~9s; resident RAM ~2.1GB post-load; inference throughput (batch 100 short passages) ~120 passages/sec; first memory_search post-startup ~15ms (model warm via MCP server warmup hook)\nD: quote measured numbers precisely going forward \u2235 had been citing inconsistent values across contexts\nL: CPU-native ONNX runtime throughput better than expected"
+    },
+    {
+      "id": "narr-04",
+      "category": "narrative-warning",
+      "prose_len": 803,
+      "cml_len": 501,
+      "compression_ratio": 0.624,
+      "n_original_facts": 11,
+      "n_preserved": 11,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "D: never run db:migrate:fresh without first reading APP_ENV & verifying target hostname \u2235 Jan 22 incident: ran db:migrate:fresh against example-shop.com believing target was staging; APP_ENV flag pointed to production instead; lost ~12 hours customer messages; staging has prevent_fresh trigger (raises exception on destructive migration) but production lacks it; production executed command without safeguard; W: fatigue/urgency tempts skipping verification\u2014recall this incident to prevent recurrence"
+    },
+    {
+      "id": "narr-05",
+      "category": "narrative-preference",
+      "prose_len": 845,
+      "cml_len": 461,
+      "compression_ratio": 0.546,
+      "n_original_facts": 13,
+      "n_preserved": 13,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "P: tone=casual\u2192playful direct style over corporate-speak; reads more human\nP: no em dashes in any writing\u2014use hyphens, parentheses, or sentence-end instead\nP: suggested text blocks\u2192always in copyable code fences for direct lift\nP: email replies\u2192concise, target 3-5 sentences max unless specific reason requires more\nP: reviews of my writing\u2192honest opinions required, not validation; \"it is great\" signals you're not being truthful; want actual critical feedback"
+    }
+  ]
+}

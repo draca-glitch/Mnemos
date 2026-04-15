@@ -1,0 +1,58 @@
+{
+  "mode": "hybrid",
+  "granularity": "session",
+  "completed_at": "2026-04-10T06:02:37+02:00",
+  "notes": "Lightweight mode: FTS5 + sqlite-vec + RRF. No reranker, no CML preprocessing. The lightest configuration Mnemos ships, intended for sub-1 GB / Pi-class deployments. First run, no parameter tuning.",
+  "recall": {
+    "1": 0.9191489361702128,
+    "3": 0.9702127659574468,
+    "5": 0.9808510638297873,
+    "10": 0.9893617021276596
+  },
+  "ndcg": {
+    "5": 0.9604562126411953,
+    "10": 0.959948903860709
+  },
+  "per_type": {
+    "single-session-user": {
+      "1": 0.984375,
+      "3": 1.0,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "multi-session": {
+      "1": 0.9421487603305785,
+      "3": 0.9917355371900827,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "single-session-preference": {
+      "1": 0.6,
+      "3": 0.8666666666666667,
+      "5": 0.8666666666666667,
+      "10": 0.9666666666666667
+    },
+    "temporal-reasoning": {
+      "1": 0.8976377952755905,
+      "3": 0.9448818897637795,
+      "5": 0.9763779527559056,
+      "10": 0.984251968503937
+    },
+    "knowledge-update": {
+      "1": 0.9861111111111112,
+      "3": 1.0,
+      "5": 1.0,
+      "10": 1.0
+    },
+    "single-session-assistant": {
+      "1": 0.9285714285714286,
+      "3": 0.9642857142857143,
+      "5": 0.9642857142857143,
+      "10": 0.9642857142857143
+    }
+  },
+  "avg_time": 45.919433874272286,
+  "total_time": 21582.133920907974,
+  "questions_evaluated": 470,
+  "failures": 0
+}

@@ -1,0 +1,142 @@
+{
+  "corpus": "cml_fidelity_corpus.json",
+  "n_memories": 9,
+  "total_facts": 98,
+  "total_preserved": 79,
+  "overall_preservation_rate": 0.8061,
+  "average_compression_ratio": 0.566,
+  "per_memory": [
+    {
+      "id": "dec-01",
+      "category": "decision",
+      "prose_len": 440,
+      "cml_len": 235,
+      "compression_ratio": 0.534,
+      "n_original_facts": 12,
+      "n_preserved": 8,
+      "preservation_rate": 0.6667,
+      "dropped_facts": [
+        "Alternatives considered were pgvector, Chroma, and Weaviate",
+        "pgvector was rejected because it requires a separate server process",
+        "Chroma was rejected because it requires a separate server process",
+        "Weaviate was rejected because it requires a separate server process"
+      ],
+      "cml_output": "D: sqlite-vec selected over pgvector for Mnemos memory store \u2235 embedded, single-writer, zero-deployment vector search default (2026-02-13 v6 planning); Qdrant retained as optional backend for multi-node/high-QPS needs  \nF: Alternatives"
+    },
+    {
+      "id": "dec-02",
+      "category": "decision",
+      "prose_len": 378,
+      "cml_len": 64,
+      "compression_ratio": 0.169,
+      "n_original_facts": 11,
+      "n_preserved": 1,
+      "preservation_rate": 0.0909,
+      "dropped_facts": [
+        "Embedding model switched from Ollama Qwen3 to FastEmbed multilingual-e5-large",
+        "Switch was part of version v7.0",
+        "Qwen3 gave slightly higher raw cosine similarity on English than multilingual-e5-large",
+        "Qwen3 was 4x slower than multilingual-e5-large on CPU",
+        "Qwen3 did not handle Swedish well",
+        "Swedish language support mattered for the production memory store",
+        "multilingual-e5-large is 1024-dimensional",
+        "multilingual-e5-large uses ONNX format",
+        "multilingual-e5-large is CPU-native",
+        "multilingual-e5-large runs at roughly 120 passages per second on a Ryzen 7 8-core desktop"
+      ],
+      "cml_output": "D: 2026-02-15 embedding model switched from Ollama Qwen3 to Fast"
+    },
+    {
+      "id": "pref-01",
+      "category": "preference",
+      "prose_len": 332,
+      "cml_len": 212,
+      "compression_ratio": 0.639,
+      "n_original_facts": 6,
+      "n_preserved": 6,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "P:tone \u2192 direct/playful (casual replies) ; no em-dashes (use hyphens/parentheses)  \nP:format \u2192 code-fenced text blocks @ suggestions  \nP:style \u2192 proactive (no hedging)  \nP:review \u2192 honest opinions (no validation)"
+    },
+    {
+      "id": "pref-02",
+      "category": "preference",
+      "prose_len": 318,
+      "cml_len": 168,
+      "compression_ratio": 0.528,
+      "n_original_facts": 7,
+      "n_preserved": 4,
+      "preservation_rate": 0.5714,
+      "dropped_facts": [
+        "Long-form writing is acceptable for documentation.",
+        "Long-form writing is acceptable for RFCs.",
+        "Long-form writing is not acceptable for routine correspondence."
+      ],
+      "cml_output": "F:Email replies\u21923-5 sentences;casual tone;exclude AI-generated footers \u2235 automated ;  \nF:Internal Slack-style messages\u21921-2 sentences ;  \nF:Long-form writing\u2192allowed for"
+    },
+    {
+      "id": "fact-02",
+      "category": "fact",
+      "prose_len": 272,
+      "cml_len": 266,
+      "compression_ratio": 0.978,
+      "n_original_facts": 9,
+      "n_preserved": 9,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "F:prod_db \u2192 db-prod-01; MariaDB socket /var/run/mysqld/mysqld.sock; database prod_shop; user shop_prod_rhclh7  \nF:staging_db \u2192 same server as prod_db; database test_shop  \nF:binlog \u2192 format ROW; retention 7d; size cap 50GB; rotation policy oldest-first @ cap reached"
+    },
+    {
+      "id": "narr-01",
+      "category": "narrative-learning",
+      "prose_len": 1023,
+      "cml_len": 604,
+      "compression_ratio": 0.59,
+      "n_original_facts": 13,
+      "n_preserved": 13,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "F: Stripe webhook integration caused signature verification failures \u2235 middleware pre-read body stream \u2192 empty stream at handler; D: disabled body parsing on /webhooks/stripe route via dependency override @ 2023-10-04; F: initial suspects included stale webhook URL #1 and incorrect secret #2; W: FastAPI middleware consumed body stream before handler access \u2192 invalid signature verification; L: document this workaround to prevent future recurrence; F: fix required 1 hour of debugging after 3-4 failed attempts; C: Stripe docs specify raw byte-for-byte request body required for signature verification."
+    },
+    {
+      "id": "narr-02",
+      "category": "narrative-decision",
+      "prose_len": 937,
+      "cml_len": 801,
+      "compression_ratio": 0.855,
+      "n_original_facts": 14,
+      "n_preserved": 14,
+      "preservation_rate": 1.0,
+      "dropped_facts": [],
+      "cml_output": "D: Vector store migration debate (sqlite-vec \u2192 pgvector) concluded yesterday afternoon; decision: retain sqlite-vec as Mnemos default config, ship pgvector as optional backend \u25b3 prior debate duration exceeded optimal  \nF: Arguments for pgvector: existing Postgres deployment for app data, avoids separate embedded vector index maintenance  \nF: Arguments for sqlite-vec: rock-solid reliability, zero-deployment (co-located with SQLite memory data), no multi-node vector search needed at current scale  \nD: Final decision driven by zero-deployment being core feature for single-user Mnemos design \u2235 aligns with system's target use case  \nC: Mnemos vector backend options: [sqlite-vec (default), pgvector (optional)]  \nW: Debate duration exceeded efficiency threshold (no quantified time metric provided)"
+    },
+    {
+      "id": "narr-03",
+      "category": "narrative-fact",
+      "prose_len": 930,
+      "cml_len": 372,
+      "compression_ratio": 0.4,
+      "n_original_facts": 13,
+      "n_preserved": 12,
+      "preservation_rate": 0.9231,
+      "dropped_facts": [
+        "The 9-second cold start only matters once per MCP server boot."
+      ],
+      "cml_output": "F: FastEmbed loading multilingual-e5-large takes 9s cold start on Ryzen 7 8-core, 64GB ECC RAM desktop; resident RAM: 2.1GB post-load. F: Inference throughput: 120 passages/s (batch 100) via CPU-native ONNX runtime. F: First memory_search post-startup: 15ms due to warmup hook in MCP server (model already loaded). D: Quote numbers more carefully to avoid inconsistencies."
+    },
+    {
+      "id": "narr-05",
+      "category": "narrative-preference",
+      "prose_len": 845,
+      "cml_len": 340,
+      "compression_ratio": 0.402,
+      "n_original_facts": 13,
+      "n_preserved": 12,
+      "preservation_rate": 0.9231,
+      "dropped_facts": [
+        "Em dashes are considered lazy"
+      ],
+      "cml_output": "P: Tone \u2192 casual/playful direct style \u2235 reads like actual person  \nP: Punctuation \u2192 avoid em dashes; use hyphens/parentheses/or sentence-end  \nP: Text blocks \u2192 code fences for copyability  \nP: Email replies \u2192 concise (3-5 sentences); expand only with specific reason  \nW: Review responses \u2192 demand honesty; \"it is great\" implies withholding"
+    }
+  ]
+}

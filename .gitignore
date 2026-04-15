@@ -1,0 +1,52 @@
+# Database files (contain personal data)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Mnemos local data
+.mnemos/
+
+# pyproject build artifacts
+*.egg-info/
+*.egg
+
+# Benchmark dataset (large, downloadable from HuggingFace)
+benchmarks/longmemeval_s.json
+benchmarks/longmemeval_m.json
+benchmarks/longmemeval_oracle.json
+benchmarks/bench_*.log
+
+# Benchmark run caches (rebuilt on first run)
+benchmarks/cml_fidelity_cache/
+benchmarks/cml_session_cache.db
+benchmarks/qa_smoke.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local config
+config.local.json
+.env
+.env.local

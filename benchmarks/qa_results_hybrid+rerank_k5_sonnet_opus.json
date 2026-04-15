@@ -1,0 +1,61 @@
+{
+  "mode": "hybrid+rerank",
+  "k": 5,
+  "answerer": "sonnet",
+  "judge": "opus",
+  "overall_accuracy": 0.0,
+  "evaluated": 3,
+  "total": 3,
+  "per_type": {
+    "single-session-user": {
+      "accuracy": 0.0,
+      "n": 3
+    }
+  },
+  "answerer_fails": 0,
+  "judge_fails": 0,
+  "per_question": [
+    {
+      "qid": "e47becba",
+      "type": "single-session-user",
+      "correct": false,
+      "system_answer": "I don't have enough information to answer that.",
+      "reference": "Business Administration",
+      "retrieved": [
+        "answer_280352e9",
+        "d414cac5_4",
+        "f6859b48_2",
+        "sharegpt_UnjngE7_65",
+        "aae4411b_2"
+      ]
+    },
+    {
+      "qid": "118b2229",
+      "type": "single-session-user",
+      "correct": false,
+      "system_answer": "I don't have enough information to answer that.",
+      "reference": "45 minutes each way",
+      "retrieved": [
+        "answer_40a90d51",
+        "5209e813_2",
+        "sharegpt_dabXXRO_10",
+        "7d8b5834_1",
+        "db50c0f6"
+      ]
+    },
+    {
+      "qid": "51a45a95",
+      "type": "single-session-user",
+      "correct": false,
+      "system_answer": "I don't have enough information to answer that.",
+      "reference": "Target",
+      "retrieved": [
+        "answer_d61669c7",
+        "sharegpt_0dVk0BE_1",
+        "5c44d9fe_1",
+        "07ba9acd_2",
+        "8fa64936_1"
+      ]
+    }
+  ]
+}

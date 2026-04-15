@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mnemos"
+version = "10.0.0"
+description = "State-of-the-art persistent memory system for AI agents (98.1% on LongMemEval, CPU-only, MCP-native)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "draca-glitch"}
+]
+keywords = ["memory", "ai", "agent", "mcp", "rag", "retrieval", "embeddings", "claude"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "fastembed>=0.3.0",
+    "sqlite-vec>=0.1.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+qdrant = ["qdrant-client>=1.7.0"]
+postgres = ["psycopg2-binary>=2.9.0"]
+benchmark = ["numpy>=1.24.0"]
+dev = ["pytest>=7.0", "ruff>=0.1.0"]
+
+[project.scripts]
+mnemos = "mnemos.cli:main"
+mnemos-mcp = "mnemos.mcp_server:main"
+
+[project.urls]
+Homepage = "https://github.com/draca-glitch/mnemos"
+Repository = "https://github.com/draca-glitch/mnemos"
+Issues = "https://github.com/draca-glitch/mnemos/issues"
+
+[tool.setuptools.packages.find]
+include = ["mnemos*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    "ignore::UserWarning:fastembed",
+]
