@@ -4,7 +4,7 @@
 
 1. **A memory system should be a memory.** It stores data and retrieves it. That is the entire job. No LLM in the retrieval or storage pipeline. The agent thinks; Mnemos remembers.
 2. **CML is a language, not a compression algorithm.** Condensed Memory Language is a token-minimal notation the agent writes directly. It is not compressed or encoded; it is just denser English with structural prefixes and operators. Both humans and LLMs read it without decoding. The Nyx cycle cemelifies anything that slipped through as prose.
-3. **Retrieval is configurable, not fixed.** Four modes, two flags: BM25 + vector only (lite), BM25 + vector + reranker (clean), BM25 + vector + CML (not recommended), BM25 + vector + reranker + CML (canonical). The reranker is enabled by default but not required for SOTA-tier numbers; even the lite mode lands above any other public memory system's no-LLM number.
+3. **Retrieval is configurable, not fixed.** Four modes, two flags: BM25 + vector only (lite), BM25 + vector + reranker (clean), BM25 + vector + CML (not recommended), BM25 + vector + reranker + CML (canonical). The reranker is enabled by default but not required for upper-90s numbers; even the lite mode lands in the same tier as any verified no-LLM number in the field.
 4. **Hybrid retrieval beats single-method.** Combining lexical (BM25) and semantic (vector) signals via RRF, then reranking with a cross-encoder, consistently outscores either alone.
 5. **Curated > Verbatim.** Memories are distilled facts, decisions, and learnings, not raw chat transcripts. Higher signal-to-noise.
 6. **CPU-only is a feature, not a constraint.** ONNX models run on every laptop, NAS, Pi 4+, and budget VPS. No GPU monopoly.
@@ -331,7 +331,7 @@ Mnemos is CPU-only but it does load real models into RAM. Component breakdown:
 
 **With reranker** (default): **~1.5-1.7 GB resident**. First call spools the cross-encoder ONNX (1-2s cold-start), then subsequent reranks are ~50 ms. The MCP server warms it up at boot so the spool cost is paid once at startup rather than on the first user query.
 
-**Without reranker** (opt-out via `MNEMOS_ENABLE_RERANK=0`): **~1-1.2 GB resident**. Fits comfortably on a 2 GB+ Raspberry Pi 4/5 or a small VPS. Trades about half a percentage point of R@5 for ~500 MB less resident memory. All benchmark numbers remain above any other public memory system's no-LLM recall.
+**Without reranker** (opt-out via `MNEMOS_ENABLE_RERANK=0`): **~1-1.2 GB resident**. Fits comfortably on a 2 GB+ Raspberry Pi 4/5 or a small VPS. Trades about half a percentage point of R@5 for ~500 MB less resident memory. All benchmark numbers remain in the same tier as any verified no-LLM recall number in the field.
 
 **Disk**: about 800 MB total for both ONNX models, downloaded automatically from HuggingFace on first use and cached under `~/.cache/fastembed`.
 
