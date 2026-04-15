@@ -685,6 +685,8 @@ Add to `~/.claude/settings.json`:
 >
 > **Do not compare R@K numbers against QA accuracy numbers.** They measure different things. 98.94% R@5 is not directly comparable to 86% QA accuracy, one measures retrieval, the other measures a full pipeline including an answering LLM. Any table or chart that puts these numbers in the same column is metric-mixing.
 
+> **What each benchmark measures, and what it doesn't.** Mnemos's core job is narrow: store memories, retrieve the right ones when asked. That is exactly what R@K on **LongMemEval** measures, and the constructed-haystack format is a fair fit for what Mnemos does. **LoCoMo** measures the same retrieval task on a different data shape (one long continuous conversation, much longer sessions), which is why CML preprocessing matters more there. **Abstention accuracy** is not a retrieval metric at all, it measures whether the answerer LLM correctly refuses when context lacks the answer; R@K skips abstention questions by definition. The one thing none of these benchmarks exercises is the *Nyx cycle*: the offline consolidation that merges duplicates, links across categories, and keeps a long-running store curated. That is why the consolidation-quality bench (below) is self-graded against the production database. The retrieval numbers above measure retrieval honestly; they just don't measure the optional consolidation layer.
+
 Run the LongMemEval benchmark yourself:
 
 ```bash
