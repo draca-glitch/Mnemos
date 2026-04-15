@@ -46,17 +46,17 @@ For other clients (Cursor, ChatGPT Desktop, Gemini), CLI usage, hooks, and the o
 - **MCP-native**: works with any MCP-compatible AI client out of the box.
 - **CLI-friendly**: a full `mnemos` command-line tool ships alongside the MCP server, so you can store, search, ingest, and consolidate from any shell, script, or cron job, with or without an AI client attached.
 - **100% local**: no API calls, no telemetry, no cloud dependencies. Your memory stays on your machine.
-- **Pluggable backbones**: storage (SQLite by default; Qdrant for HNSW at 25K+ memories; Postgres planned), embedder (any FastEmbed-compatible via `MNEMOS_EMBED_MODEL`), reranker (any cross-encoder via `MNEMOS_RERANKER_MODEL`), consolidation LLM (any OpenAI-compatible endpoint, or skip entirely).
+- **Pluggable backbones**: storage (SQLite by default, atomic single-file; Qdrant scaling layer for HNSW at 25K+ memories; Postgres backend is a stub, not implemented yet), embedder (any FastEmbed-compatible via `MNEMOS_EMBED_MODEL`), reranker (any cross-encoder via `MNEMOS_RERANKER_MODEL`), consolidation LLM (any OpenAI-compatible endpoint, or skip entirely).
 
 ## Benchmarks
 
-Mnemos is evaluated on two public long-conversation memory benchmarks (LongMemEval and LoCoMo) plus an end-to-end QA pass with abstention. In the canonical CML configuration, the same retrieval pipeline posts:
+Same pipeline runs against three public benchmarks:
 
-- **99.15% R@5 on LongMemEval** (`hybrid+rerank --cml`, 470 non-abstention questions)
-- **86.1% R@5 on LoCoMo** (`hybrid+rerank --cml`, top-K capped at 10, 446 adversarial questions excluded per the same convention LongMemEval applies to abstention)
-- **96.7% abstention accuracy** on LongMemEval's 30 abstention questions
+- **LongMemEval** (retrieval recall, 470 non-abstention questions): four configurations published, from the lite BM25+vector mode up to the canonical BM25+vector+rerank+CML.
+- **LoCoMo** (retrieval recall on long continuous conversations, 1,540 evaluable QA pairs): same pipeline, no parameter tuning, top-K capped to avoid the bypass regime.
+- **LongMemEval end-to-end QA with abstention** (500 questions including 30 abstention cases): LLM-judged answer correctness paired with the retrieval pipeline.
 
-All runs are first-run, no parameter tuning, no preprocessing of test data, no LLM in the retrieval path. Result JSON files in [`benchmarks/`](benchmarks/) so you can verify the numbers yourself. Per-mode methodology, comparison against MemPalace and the wider field, end-to-end QA, and consolidation-quality numbers in [docs/benchmarks.md](docs/benchmarks.md) and [docs/comparison.md](docs/comparison.md).
+**Every configuration is published, including the one where Mnemos looks worst** (`hybrid --cml` drops R@1 on single-session-preference to 53.33% without the reranker to rescue it). Every run is first-run, no parameter tuning, no preprocessing of test data, no LLM in the retrieval path. Result JSON files with timestamps live in [`benchmarks/`](benchmarks/) so anyone can verify the numbers. Per-mode methodology, the full number tables, comparison against MemPalace and the wider field, end-to-end QA, and consolidation-quality numbers in [docs/benchmarks.md](docs/benchmarks.md) and [docs/comparison.md](docs/comparison.md).
 
 ## The 4 MCP tools
 
@@ -69,7 +69,7 @@ memory_get(id)
 memory_update(id, [any field])
 ```
 
-That's the entire surface. No `navigate_to_wing`, no `open_room`, no `list_halls`. Just CRUD plus search. Hierarchy is metadata, not architecture. Why this matters in [docs/philosophy.md](docs/philosophy.md#why-4-tools-and-not-45).
+That's the entire surface: CRUD plus search. Hierarchy is metadata (project / subcategory columns), not architecture. Filters, validity windows, and search modes are parameters on `memory_search`, not new tools. Why this matters in [docs/philosophy.md](docs/philosophy.md#why-4-tools-and-not-45).
 
 ## Architecture (visual summary)
 
@@ -133,7 +133,7 @@ Mnemos is MIT-licensed and developed by one person on a home server, in spare ti
 - ☕ **Buy me a coffee**: [buymeacoffee.com/dracaglitch](https://buymeacoffee.com/dracaglitch)
 - 💖 **GitHub Sponsors**: [github.com/sponsors/draca-glitch](https://github.com/sponsors/draca-glitch)
 - 🐛 **Open issues** for bugs, feature requests, or weird edge cases you hit in the wild
-- 🛠️ **Send PRs**: extra extractors for the ingest module, a real Postgres backend, NLI-based contradiction detection, anything
+- 🛠️ **Send PRs**: extra extractors for the ingest module, implement the Postgres backend (currently a stub), NLI-based contradiction detection, anything
 
 Sponsorship goes directly toward keeping the development server running and toward more time spent improving Mnemos instead of doing my day job. Nothing you sponsor unlocks paid features. Mnemos stays one piece of software, fully open source, with everything in the public repo.
 
