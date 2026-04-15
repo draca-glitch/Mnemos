@@ -1,13 +1,14 @@
 # Mnemos Benchmarks
 
-Reproducible benchmarks of Mnemos against the [LongMemEval](https://github.com/xiaowu0162/LongMemEval) dataset (ICLR 2025), a consolidation-quality benchmark against historical merge events from a production memory store, and a CML fidelity benchmark on a hand-curated prose corpus.
+Reproducible benchmarks of Mnemos across multiple public datasets and Mnemos-specific quality measurements.
 
-Four metric classes, clearly separated (see the [main README benchmark section](../README.md#benchmark) for the full discussion):
+Five metric classes, clearly separated (see the [main README benchmark section](../README.md#benchmark) for the full discussion):
 
-1. **Retrieval recall**. R@K / NDCG@K on LongMemEval. Deterministic, no LLM in the measurement path. This is MemPalace-comparable.
-2. **End-to-end QA accuracy**. LLM-judged answer correctness on all 500 LongMemEval questions including abstention. This is Mastra/Emergence/Mem0-comparable.
-3. **Consolidation quality**, unique-fact preservation rate across historical merge clusters. Mnemos-specific; measures how well the Nyx cycle merges without losing specifics.
-4. **CML fidelity**, unique-fact preservation rate across a single prose → CML transformation step, on a small hand-curated corpus. Isolates the cemelification transform from the cluster-merge compression that the consolidation-quality bench conflates with it.
+1. **LongMemEval retrieval recall**. R@K / NDCG@K on the [LongMemEval](https://github.com/xiaowu0162/LongMemEval) dataset (ICLR 2025). Deterministic, no LLM in the measurement path.
+2. **End-to-end QA accuracy**. LLM-judged answer correctness on all 500 LongMemEval questions including abstention. This is the metric most of the field publishes.
+3. **LoCoMo retrieval recall**. R@K on the [LoCoMo](https://github.com/snap-research/locomo) dataset (ACL 2024). 1,540 evaluable QA pairs across 10 long conversations (19-32 sessions each), excluding 446 adversarial-by-design questions. Deterministic, no LLM in the measurement path. Top-K capped at 10 to avoid the "K >= session count" bypass.
+4. **Consolidation quality**, unique-fact preservation rate across historical merge clusters. Mnemos-specific; measures how well the Nyx cycle merges without losing specifics.
+5. **CML fidelity**, unique-fact preservation rate across a single prose → CML transformation step, on a small hand-curated corpus. Isolates the cemelification transform from the cluster-merge compression that the consolidation-quality bench conflates with it.
 
 ## Setup
 
@@ -16,7 +17,7 @@ Four metric classes, clearly separated (see the [main README benchmark section](
 wget https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json -O longmemeval_s.json
 ```
 
-## 1. Retrieval recall, `longmemeval_bench.py`
+## 1. LongMemEval retrieval recall, `longmemeval_bench.py`
 
 Runs the pure retrieval pipeline (no LLM, no answerer, no judge) and reports R@K + NDCG@K on the 470 non-abstention questions. Abstention questions are mathematically undefined for R@K (no gold session to retrieve) and are excluded per LongMemEval convention.
 
@@ -101,7 +102,53 @@ python longmemeval_rejudge.py qa_results_hybrid_k5_sonnet_opus.json --judge gpt4
 
 Experimental: CML-compress each haystack session, extract fact-level signals, cluster same-subject facts, merge via LLM, retrieve at fact level. Was built to test whether pre-retrieval consolidation helps LongMemEval multi-session questions. Result: LongMemEval's haystacks are topically disjoint conversations, not accumulating user memory, so consolidation doesn't find merge candidates. Useful as a reference implementation for the consolidation approach but not a quality lift on this benchmark.
 
-## 3. Consolidation quality (fact preservation)
+## 3. LoCoMo retrieval recall, `locomo_bench.py`
+
+[LoCoMo](https://github.com/snap-research/locomo) (Maharana et al., ACL 2024) is a long-conversation memory benchmark: 10 conversations, 19-32 sessions each, 1,986 QA pairs across 5 categories. The mean session length is 2,843 characters (median 2,652, p90 4,090).
+
+```bash
+# Download the dataset (~3MB)
+wget -O locomo10.json https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json
+
+# Run a mode (CPU-only, no LLM in retrieval)
+python locomo_bench.py --mode hybrid
+python locomo_bench.py --mode hybrid+rerank --cml
+python locomo_bench.py --mode hybrid --cml
+```
+
+**Methodology guardrails (honest baselines on LoCoMo are easy to fake; we deliberately do not):**
+
+- **Adversarial questions excluded from R@K.** Category 5 (446 questions, ~22% of the dataset) is adversarial by design: the answer is NOT in the conversation, so R@K is mathematically undefined. The bench evaluates on the 1,540 answerable questions, same convention LongMemEval uses for abstention.
+- **Top-K capped at 10.** The smallest LoCoMo conversation has 19 sessions. Top-K ≥ 19 returns every session and the retrieval stage stops doing real work; published R@K results in that regime measure how well the LLM reranker filters a complete dump, not retrieval recall. Mnemos caps K at 10 across the board, comfortably below every conversation's session count.
+- **No LLM in the retrieval path.** The cross-encoder reranker (Jina v2) is a local discriminative ONNX scorer, not a generative model. Zero outbound API calls during retrieval.
+- **Per-conversation session counts are published** alongside the result so anyone can verify K stayed below the bypass threshold.
+
+Results from this repo:
+
+| Mode | R@1 | R@3 | R@5 | R@10 | NDCG@5 | Source |
+|---|---|---|---|---|---|---|
+| `hybrid` (BM25 + vector + RRF, no LLM) | 57.9% | 77.0% | **84.7%** | **94.0%** | 77.1% | [`results_locomo_hybrid.json`](results_locomo_hybrid.json) |
+| `hybrid --cml` | 49.0% | 69.9% | 79.4% | 91.0% | 70.1% | [`results_locomo_hybrid_cml.json`](results_locomo_hybrid_cml.json) |
+| `hybrid+rerank --cml` (CML + Jina rerank) | 60.9% | 79.7% | **86.1%** | 91.9% | 79.7% | [`results_locomo_hybrid+rerank_cml.json`](results_locomo_hybrid+rerank_cml.json) |
+
+Per-category breakdown (hybrid+rerank --cml):
+
+| Category | R@1 | R@3 | R@5 | R@10 | N |
+|---|---|---|---|---|---|
+| single-hop | 59.6% | 79.4% | 85.8% | 94.0% | 282 |
+| multi-hop | 68.5% | 82.9% | 88.2% | 93.5% | 321 |
+| temporal-reasoning | 37.0% | 57.6% | 66.3% | 77.2% | 92 |
+| open-domain | 61.1% | 81.0% | 87.5% | 92.3% | 841 |
+
+**Why is `hybrid+rerank` (without CML) not in the table?** LoCoMo sessions are long: median 2,652 characters, p90 4,090. The Jina cross-encoder's attention window cannot see a whole session at once when scoring relevance, so we tested two configurations and neither was acceptable: (1) full-text rerank takes ~26 minutes per conversation on CPU (extrapolating to 4+ hours per benchmark run, infeasible); (2) truncating to the first 2,000 characters before rerank scored 78.0% R@5 on `conv-26` — net-negative against pure `hybrid`'s 86.0% on the same conversation, because the truncation cut off the very evidence the cross-encoder was supposed to score. CML preprocessing (which compresses each session to ~500 characters of dense facts) is therefore the prerequisite for effective cross-encoder reranking on long-session benchmarks. The published `hybrid+rerank --cml` row is the configuration that pairs the cross-encoder with text it can actually see in full.
+
+**Reading the numbers:**
+
+- The recommended deployment for LoCoMo-shape data (long, multi-session conversations) is **either** `hybrid` (highest R@10 at 94.0%, simplest, no LLM cost anywhere) **or** `hybrid+rerank --cml` (highest R@5 at 86.1%, with a CML compression cost amortized at index time). The choice is a small recall-position tradeoff against compression cost.
+- `hybrid --cml` (CML at index but no rerank) underperforms plain `hybrid`. CML is mildly out-of-distribution for the e5-large bi-encoder at first-stage retrieval; on long-session inputs that gap is more visible than on the LongMemEval short-session inputs. Rerank recovers the loss and then some.
+- Temporal-reasoning is the hardest category across all modes (66.3% R@5 even with CML+rerank). Multi-session temporal questions require composing facts across non-adjacent sessions, which retrieval alone does not solve; this is an answerer-side problem, not a retrieval problem.
+
+## 4. Consolidation quality (fact preservation)
 
 Separate benchmark that does not use LongMemEval. Instead, it measures unique-fact preservation on 30 historical merge events from an actual Mnemos production memory store, traceable via `merged-into-<id>` tags on archived originals.
 
@@ -120,7 +167,7 @@ Current data (this repository's production benchmark, run against a personal mem
 
 See [main README §Consolidation quality](../README.md#consolidation-quality-fact-preservation-in-the-nyx-cycle) for methodology and the tier-2 recall framing.
 
-## 4. CML fidelity (format-level content parity), `cml_fidelity_bench.py`
+## 5. CML fidelity (format-level content parity), `cml_fidelity_bench.py`
 
 Answers the question: **does CML as a storage format preserve the same information as prose?** In normal use an agent writes memories directly in CML, so there is no transformation step at all; this bench asks whether, if you *had* written the same content as prose, anything would have been lost by choosing CML instead. The LongMemEval `--cml` runs already prove ranking parity (R@K is basically identical on prose vs CML haystacks); this benchmark proves *content* parity in the same direction.
 

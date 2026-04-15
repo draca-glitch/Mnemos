@@ -18,7 +18,7 @@
 - **CLI-friendly**: a full `mnemos` command-line tool ships alongside the MCP server, so you can store, search, ingest, and consolidate from any shell, script, or cron job, with or without an AI client attached
 - **100% local**: no API calls, no telemetry, no cloud dependencies. Your memory stays on your machine
 - **Pluggable everywhere, true open source, the way it was supposed to mean.** Swap any of the four backbones independently. Storage (SQLite backend by default, atomic single-file; Qdrant scaling layer for HNSW vector search at 25K-plus memories; Postgres backend planned as an atomic server-hosted option); embedder (any FastEmbed-compatible model via `MNEMOS_EMBED_MODEL`); reranker (any cross-encoder via `MNEMOS_RERANKER_MODEL`); consolidation LLM (any OpenAI-compatible endpoint via `MNEMOS_LLM_API_URL` + `MNEMOS_LLM_MODEL`, or skip entirely). Defaults are picked, not mandated. Not "open code, locked backbone", open code and a stack you can take apart and reassemble on your own terms.
-- **Benchmarked**: **98.94% Recall@5** on LongMemEval with the cross-encoder reranker enabled, no preprocessing of test data, no parameter tuning, first run. The lighter BM25+vector-only mode (no rerank at all) posts **98.30%** on the same benchmark, and the canonical configuration with cemelification (the way Mnemos is intended to run) measures **99.15%**. All three are first-run results. **Matches or exceeds every reproducible retrieval-recall number I have been able to verify from other public memory systems** (the closest comparable is MemPalace raw ChromaDB at 96.6%, which is ChromaDB's default sentence-transformer embeddings with no MemPalace-specific code path involved, per the MemPalace maintainers' own acknowledgement). Mnemos gets there without an LLM in the search path, without vendor lock-in, and without inflating any of these numbers. The result files in [`benchmarks/`](benchmarks/) are how you verify it yourself.
+- **Benchmarked**: **98.94% Recall@5** on LongMemEval with the cross-encoder reranker enabled, no preprocessing of test data, no parameter tuning, first run. The lighter BM25+vector-only mode (no rerank at all) posts **98.30%** on the same benchmark, and the canonical configuration with cemelification (the way Mnemos is intended to run) measures **99.15%**. All three are first-run results. Mnemos gets there without an LLM in the search path and without vendor lock-in. The result files in [`benchmarks/`](benchmarks/) are how you verify it yourself.
 
 > **Why v10 in a brand-new repository?** Mnemos has been in private production for months. Each of the nine internal versions involved real experimentation: adding features, removing the ones that did not pull their weight, evaluating retrieval quality, and iterating on what actually made the system smarter rather than just bigger. v10 is the state that was running on the day I decided to publish, the existing architecture, a packaging and documentation pass, and the benchmark numbers this README cites, all generated from that same code. As for the repository history: I had never used git for coding before this project. The entire v1 to v9 history of Mnemos lived as plain files on a home server, iterated on manually, never under version control. I opened my first GitHub account and pushed this repository in April 2026. The system has months of internal history behind it. The repository does not. See [CHANGELOG.md](CHANGELOG.md) for the incomplete timeline; I was not used to professional coding workflows and the changelog only captures what I happened to write down at the time.
 
@@ -697,11 +697,13 @@ Add to `~/.claude/settings.json`:
 
 ## Benchmark
 
-> **Three metric classes, clearly separated.** Memory systems get benchmarked on three fundamentally different things, and conflating them produces misleading comparisons. Mnemos publishes all three.
+> **Multiple metric classes, clearly separated.** Memory systems get benchmarked on fundamentally different things, and conflating them produces misleading comparisons. Mnemos publishes across all of them.
 >
-> - **Retrieval recall (R@K, NDCG@K).** Does the system find the right memory? Deterministic, no LLM in the measurement path. LongMemEval supports this on its 470 non-abstention questions. Mnemos's headline numbers live here. This is what MemPalace publishes.
+> - **Retrieval recall (R@K, NDCG@K) on LongMemEval.** Does the system find the right memory? Deterministic, no LLM in the measurement path. 470 non-abstention questions. Mnemos's headline numbers live here.
+> - **Retrieval recall (R@K) on LoCoMo.** Same metric class, different dataset. 1,540 evaluable QA pairs across 10 long conversations (19-32 sessions each), with 446 adversarial questions excluded by methodology. Top-K capped at 10 to avoid the bypass where K ≥ session count makes retrieval trivial. Numbers in [`benchmarks/README.md`](benchmarks/README.md#3-locomo-retrieval-recall-locomo_benchpy).
 > - **End-to-end QA accuracy (LLM-judge).** Given the retrieved context, does the answerer produce the correct answer? Bundled metric, measures retrieval + answerer reading comprehension + judge fairness. LongMemEval supports this on all 500 questions including abstention. This is what Mastra, Emergence, Mem0, Supermemory, and most of the field publish. Mnemos also publishes these numbers below.
 > - **Consolidation quality (fact preservation).** How well does the offline Nyx cycle merge related memories without losing specifics? Our own internal metric, reported against 30 historical merge events from the Mnemos production database.
+> - **CML fidelity.** Does CML preserve the same atomic-fact content as equivalent prose? 20-memory hand-curated corpus, 209 facts, 8 models tested. See [`benchmarks/README.md`](benchmarks/README.md#5-cml-fidelity-format-level-content-parity-cml_fidelity_benchpy).
 >
 > **Do not compare R@K numbers against QA accuracy numbers.** They measure different things. 98.94% R@5 is not directly comparable to 86% QA accuracy, one measures retrieval, the other measures a full pipeline including an answering LLM. Any table or chart that puts these numbers in the same column is metric-mixing.
 
@@ -826,6 +828,22 @@ If you disagree with whether LLM-based CML preprocessing of the benchmark data c
 | **`hybrid+rerank --cml` (canonical, recommended default)** | **99.15%** | ~1.5-1.7 GB | ~50-80 ms | **The default for any deployment with RAM to spare.** What Mnemos was designed to run in. Steady-state of an actively-used Mnemos. |
 
 All four are first-run, no-tuning measurements with their result JSON files committed to `benchmarks/`. **Mnemos lets you pick the hit rate you want against the resources you can spare**, on the same retrieval pipeline, by toggling two configuration flags. You are not locked in any direction. But if you ask me, you should run it in CML with the reranker on; that is the configuration the system was designed around and the one I use every day.
+
+### LoCoMo retrieval recall (second public benchmark)
+
+LongMemEval is the primary benchmark Mnemos was designed against, but publishing a single benchmark is brittle: any system can over-fit to one dataset. [LoCoMo](https://github.com/snap-research/locomo) (Maharana et al., ACL 2024) is a separate long-conversation memory benchmark: 10 conversations of 19-32 sessions each, 1,986 QA pairs across 5 categories. Median session length 2,652 chars (much longer than LongMemEval's typical sessions, which changes what configurations are practical).
+
+The same Mnemos retrieval pipeline runs against LoCoMo with no parameter tuning. Methodology guardrails: top-K capped at 10 (the smallest LoCoMo conversation has 19 sessions; K ≥ 19 trivially returns every session and stops measuring retrieval), 446 adversarial-by-design questions in category 5 excluded from R@K (mathematically undefined; same convention LongMemEval applies to abstention).
+
+| Mode | R@1 | R@3 | R@5 | R@10 | NDCG@5 |
+|---|---|---|---|---|---|
+| `hybrid` (BM25 + vector + RRF) | 57.9% | 77.0% | **84.7%** | **94.0%** | 77.1% |
+| `hybrid --cml` | 49.0% | 69.9% | 79.4% | 91.0% | 70.1% |
+| `hybrid+rerank --cml` | 60.9% | 79.7% | **86.1%** | 91.9% | 79.7% |
+
+`hybrid+rerank` without CML is not in the table because it underperforms even plain `hybrid` on this benchmark — LoCoMo sessions are too long for the cross-encoder's attention window when scored at full length, and aggressive truncation loses the evidence the cross-encoder was supposed to read. CML preprocessing (sessions compressed to ~500 chars of dense facts) is the prerequisite for effective reranking on long-session data. Full methodology, per-category breakdown, and the conv-26 truncation-experiment data point are in [`benchmarks/README.md`](benchmarks/README.md#3-locomo-retrieval-recall-locomo_benchpy).
+
+The headline takeaway: **the same Mnemos pipeline that scores 99.15% on LongMemEval scores 86.1% on LoCoMo** without any retraining or per-dataset tuning. The gap is the dataset, not the system: LoCoMo conversations are denser, longer, and include adversarial cases that LongMemEval does not. Both benchmarks evaluate retrieval recall the same way; both numbers are first-run, no-LLM-in-retrieval, fully air-gappable.
 
 ### End-to-end QA accuracy (retrieval + answerer + judge)
 

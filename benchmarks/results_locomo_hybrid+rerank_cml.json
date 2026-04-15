@@ -1,0 +1,64 @@
+{
+  "benchmark": "LoCoMo",
+  "dataset_path": "/root/work/mnemos/benchmarks/locomo10.json",
+  "mode": "hybrid+rerank",
+  "cml": true,
+  "max_k": 10,
+  "questions_evaluated": 1536,
+  "adversarial_skipped": 446,
+  "failures": 4,
+  "recall_any": {
+    "1": 0.609375,
+    "3": 0.796875,
+    "5": 0.8606770833333334,
+    "10": 0.9192708333333334
+  },
+  "recall_all": {
+    "1": 0.4811197916666667,
+    "3": 0.6783854166666666,
+    "5": 0.75,
+    "10": 0.82421875
+  },
+  "ndcg": {
+    "1": 0.609375,
+    "3": 0.7735678294898642,
+    "5": 0.7969905525067854,
+    "10": 0.8049884681952891
+  },
+  "per_category": {
+    "2": {
+      "label": "multi-hop",
+      "n": 321,
+      "recall_any@1": 0.6853582554517134,
+      "recall_any@3": 0.8286604361370716,
+      "recall_any@5": 0.881619937694704,
+      "recall_any@10": 0.9345794392523364
+    },
+    "3": {
+      "label": "temporal-reasoning",
+      "n": 92,
+      "recall_any@1": 0.3695652173913043,
+      "recall_any@3": 0.5760869565217391,
+      "recall_any@5": 0.6630434782608695,
+      "recall_any@10": 0.7717391304347826
+    },
+    "1": {
+      "label": "single-hop",
+      "n": 282,
+      "recall_any@1": 0.5957446808510638,
+      "recall_any@3": 0.7943262411347518,
+      "recall_any@5": 0.8581560283687943,
+      "recall_any@10": 0.9397163120567376
+    },
+    "4": {
+      "label": "open-domain",
+      "n": 841,
+      "recall_any@1": 0.6111771700356718,
+      "recall_any@3": 0.8097502972651606,
+      "recall_any@5": 0.8751486325802615,
+      "recall_any@10": 0.9227110582639715
+    }
+  },
+  "avg_query_ms": 2840.279898761461,
+  "total_query_s": 4362.669924497604
+}
