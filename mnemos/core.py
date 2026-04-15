@@ -317,7 +317,8 @@ class Mnemos:
     def search(self, query, project=None, subcategory=None, layer=None,
                type_filter=None, status="active", valid_only=False,
                search_mode=None, limit=20, auto_widen=True,
-               expand_merged=False) -> dict:
+               expand_merged=False, snippet_chars=None,
+               include_linked=False, linked_depth=1) -> dict:
         """Hybrid retrieval: FTS5 + vector search + RRF merge + optional rerank.
 
         When `expand_merged=True`, results that were created by the Nyx
@@ -405,11 +406,67 @@ class Mnemos:
         results = [memories[mid].to_dict() for mid in merged_ids if mid in memories]
 
         # Attach links
+        link_map = {}
         if merged_ids:
             link_map = self.store.get_links(merged_ids)
             for r in results:
                 if r["id"] in link_map:
                     r["links"] = link_map[r["id"]]
+
+        # Snippet extraction: replace full content with a query-matched window.
+        # Caller opts in with snippet_chars; default (None) keeps full content
+        # for backward compatibility. Memories that don't match the FTS query
+        # (pure vec hits) fall back to a head slice of the content. The
+        # `snippet` flag on a result indicates its content was actually
+        # modified, not merely that snippet_chars was requested.
+        if snippet_chars and snippet_chars > 0:
+            try:
+                snippet_map = self.store.get_snippets(
+                    merged_ids, query, chars=snippet_chars
+                )
+            except Exception:
+                snippet_map = {}
+            for r in results:
+                mid = r["id"]
+                if mid in snippet_map and snippet_map[mid]:
+                    r["content"] = snippet_map[mid]
+                    r["snippet"] = True
+                elif r.get("content") and len(r["content"]) > snippet_chars:
+                    # Fallback for vec-only hits: head slice
+                    r["content"] = r["content"][:snippet_chars] + " …"
+                    r["snippet"] = True
+                # else: content is already short enough, no modification
+                # — `snippet` flag is not set
+
+        # Linked memory expansion: fold first-hop linked memories as summaries
+        # into each result. Saves round-trips for callers that want to see
+        # the relationship graph without a follow-up memory_get per link.
+        if include_linked and link_map:
+            # Collect unique linked IDs across all results (depth=1 only for now)
+            linked_ids = set()
+            for r in results:
+                for link in link_map.get(r["id"], []):
+                    linked_ids.add(link["linked_id"])
+            # Don't refetch memories that are already in the result set
+            already = {r["id"] for r in results}
+            to_fetch = list(linked_ids - already)
+            fetched = self.store.get_memories_by_ids(to_fetch) if to_fetch else {}
+            for r in results:
+                linked_summaries = []
+                for link in link_map.get(r["id"], []):
+                    lid = link["linked_id"]
+                    m = fetched.get(lid) or memories.get(lid)
+                    if not m:
+                        continue
+                    linked_summaries.append({
+                        "id": lid,
+                        "project": m.project,
+                        "relation": link["relation"],
+                        "strength": link["strength"],
+                        "content": (m.content or "")[:200],
+                    })
+                if linked_summaries:
+                    r["linked_memories"] = linked_summaries
 
         # Tier-2 recall: expand consolidated memories to their source originals
         if expand_merged:
@@ -430,6 +487,10 @@ class Mnemos:
             response["widened"] = True
         if expand_merged:
             response["expand_merged"] = True
+        if snippet_chars:
+            response["snippet_chars"] = snippet_chars
+        if include_linked:
+            response["include_linked"] = True
         return response
 
     # --- Get / Update / Delete ---
@@ -493,6 +554,19 @@ class Mnemos:
 
     def stats(self) -> dict:
         return self.store.stats()
+
+    def list_tags(self, project=None, min_count=1, order_by="count",
+                  limit=500) -> list:
+        """List unique tags across active memories with usage counts.
+
+        Useful for discovering existing tagging conventions before
+        creating new tags, preventing tag drift ("authoritative" vs
+        "canonical" vs "verified" for the same concept).
+        """
+        return self.store.list_tags(
+            namespace=self.namespace, project=project,
+            min_count=min_count, order_by=order_by, limit=limit,
+        )
 
     # --- Briefing / digest / map / health ---
 

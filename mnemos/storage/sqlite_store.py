@@ -528,6 +528,78 @@ class SQLiteStore(MnemosStore):
             "namespace": ns,
         }
 
+    # --- Tag discovery ---
+
+    def list_tags(self, namespace=None, project=None, min_count=1,
+                  order_by="count", limit=500):
+        """Aggregate unique tags from the tags CSV column across active memories.
+
+        Tags are stored as comma-separated strings. This method splits,
+        normalizes (strip whitespace, drop empties), aggregates counts,
+        and returns one row per unique tag with an example memory ID.
+        """
+        conn = self._get_conn()
+        ns = namespace or self.namespace
+        where = "status = 'active' AND namespace = ? AND tags != ''"
+        params = [ns]
+        if project:
+            where += " AND project = ?"
+            params.append(project)
+        rows = conn.execute(
+            f"SELECT id, tags FROM memories WHERE {where}", params,
+        ).fetchall()
+        counts = {}
+        examples = {}
+        for r in rows:
+            for raw in (r["tags"] or "").split(","):
+                tag = raw.strip()
+                if not tag:
+                    continue
+                counts[tag] = counts.get(tag, 0) + 1
+                examples.setdefault(tag, r["id"])
+        items = [
+            {"tag": t, "count": c, "example_id": examples[t]}
+            for t, c in counts.items() if c >= min_count
+        ]
+        if order_by == "alpha":
+            items.sort(key=lambda x: x["tag"].lower())
+        else:
+            items.sort(key=lambda x: (-x["count"], x["tag"].lower()))
+        return items[:limit]
+
+    # --- Snippet extraction (FTS5 snippet() built-in) ---
+
+    def get_snippets(self, ids, query, chars=200):
+        """Return FTS5-extracted snippets for memory IDs that match the query.
+
+        Uses SQLite's built-in snippet() function which returns a window
+        around the match with configurable token count. Memories that
+        don't match the FTS query are absent from the result (caller
+        should fall back to content head).
+        """
+        if not ids:
+            return {}
+        from ..query import clean_fts_query
+        conn = self._get_conn()
+        fts_query = clean_fts_query(query, mode="OR")
+        if not fts_query:
+            return {}
+        # snippet() token count is approximate. ~6 chars/token average.
+        tokens = max(8, min(64, chars // 6))
+        ph = ",".join("?" for _ in ids)
+        params = [fts_query] + list(ids)
+        try:
+            rows = conn.execute(
+                f"""SELECT fts.rowid AS id,
+                           snippet(memories_fts, 0, '⟪', '⟫', ' … ', {tokens}) AS snip
+                    FROM memories_fts fts
+                    WHERE memories_fts MATCH ? AND fts.rowid IN ({ph})""",
+                params,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {r["id"]: r["snip"] for r in rows if r["snip"]}
+
     # --- Helpers ---
 
     @staticmethod

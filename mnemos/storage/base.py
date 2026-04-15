@@ -176,3 +176,37 @@ class MnemosStore(ABC):
     @abstractmethod
     def stats(self, namespace: Optional[str] = None) -> dict:
         """Return summary statistics: count, active, archived, by_project, etc."""
+
+    # --- Tag discovery (optional, backends may no-op) ---
+
+    def list_tags(
+        self,
+        namespace: Optional[str] = None,
+        project: Optional[str] = None,
+        min_count: int = 1,
+        order_by: str = "count",
+        limit: int = 500,
+    ) -> list:
+        """Return all unique tags with usage counts.
+
+        Default implementation returns an empty list; backends that can
+        efficiently aggregate tags should override. Format:
+        [{"tag": "...", "count": int, "example_id": int}, ...]
+        """
+        return []
+
+    # --- Snippet extraction (optional, used by search when snippet_chars is set) ---
+
+    def get_snippets(
+        self,
+        ids: list,
+        query: str,
+        chars: int = 200,
+    ) -> dict:
+        """Return query-matched snippets for the given memory IDs.
+
+        Default implementation returns empty dict; backends that support
+        FTS snippet extraction (like SQLite FTS5) should override.
+        Format: {memory_id: snippet_string}.
+        """
+        return {}

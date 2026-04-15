@@ -83,7 +83,8 @@ That's the entire surface: CRUD plus search. Hierarchy is metadata (project / su
                          ┌────────▼────────┐
                          │  Mnemos MCP     │
                          │     Server      │
-                         │   (4 tools)     │
+                         │  (4 CRUD + 1    │
+                         │   schema tool)  │
                          └────────┬────────┘
                                   │
               ┌───────────────────┼───────────────────┐
@@ -120,7 +121,7 @@ Realistic compression: 14% on already-dense fact entries, up to 60% on narrative
 - **[docs/cml.md](docs/cml.md)**: CML grammar, fidelity benchmarks, opt-out
 - **[docs/benchmarks.md](docs/benchmarks.md)**: full per-mode methodology, LoCoMo, end-to-end QA, consolidation quality
 - **[docs/comparison.md](docs/comparison.md)**: MemPalace head-to-head and wider-field comparison table
-- **[docs/philosophy.md](docs/philosophy.md)**: why 4 tools, why no LLM in the search path, what the Nyx cycle actually learns
+- **[docs/philosophy.md](docs/philosophy.md)**: why the tool surface is minimal, why no LLM in the search path, what the Nyx cycle actually learns
 - **[docs/origin.md](docs/origin.md)**: why this exists, why the name, why v10 in a brand-new repo
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: deep technical reference: data model, retrieval mechanics, storage internals
 - **[docs/agent-instructions.md](docs/agent-instructions.md)**: copy-paste CLAUDE.md blocks for CML and prose modes

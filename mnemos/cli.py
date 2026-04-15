@@ -44,6 +44,8 @@ def cmd_search(mnemos, args):
         search_mode=args.mode,
         limit=args.limit,
         expand_merged=args.expand_merged,
+        snippet_chars=getattr(args, "snippet_chars", None),
+        include_linked=getattr(args, "include_linked", False),
     )
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -79,6 +81,21 @@ def cmd_delete(mnemos, args):
 
 def cmd_stats(mnemos, args):
     print(json.dumps(mnemos.stats(), indent=2, ensure_ascii=False))
+
+
+def cmd_tags(mnemos, args):
+    tags = mnemos.list_tags(
+        project=args.project, min_count=args.min_count,
+        order_by=args.order_by, limit=args.limit,
+    )
+    if args.json:
+        print(json.dumps(tags, indent=2, ensure_ascii=False))
+    else:
+        if not tags:
+            print("(no tags)")
+            return
+        for t in tags:
+            print(f"  {t['count']:5d}  {t['tag']}  (example #{t['example_id']})")
 
 
 def cmd_briefing(mnemos, args):
@@ -218,6 +235,10 @@ def main(argv=None):
     p.add_argument("--limit", "-l", type=int, default=20)
     p.add_argument("--expand-merged", action="store_true",
                    help="Tier-2 recall: enrich consolidated memories with their source originals")
+    p.add_argument("--snippet-chars", type=int, default=None,
+                   help="Replace result content with a query-matched window of ~N chars")
+    p.add_argument("--include-linked", action="store_true",
+                   help="Fold first-hop linked memories into each result as summaries")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_search)
 
@@ -250,6 +271,15 @@ def main(argv=None):
     # stats
     p = sub.add_parser("stats", help="Show memory statistics")
     p.set_defaults(fn=cmd_stats)
+
+    # tags
+    p = sub.add_parser("tags", help="List unique tags with usage counts (discover tag conventions)")
+    p.add_argument("--project", "-p")
+    p.add_argument("--min-count", type=int, default=1)
+    p.add_argument("--order-by", choices=["count", "alpha"], default="count")
+    p.add_argument("--limit", type=int, default=500)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_tags)
 
     # briefing
     p = sub.add_parser("briefing", help="Compact session-start briefing (~370 tokens)")

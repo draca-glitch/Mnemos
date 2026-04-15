@@ -117,7 +117,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "memory_search",
-        "description": "Hybrid search: FTS5 + vector + RRF + optional rerank. Auto-widens on thin results.",
+        "description": "Hybrid search: FTS5 + vector + RRF + optional rerank. Auto-widens on thin results. Supports snippet extraction and linked-memory expansion for bandwidth-aware callers.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -131,8 +131,23 @@ TOOL_DEFINITIONS = [
                 "search_mode": {"type": "string", "enum": ["fts", "vec", "hybrid"]},
                 "limit": {"type": "integer", "default": 20, "maximum": 50},
                 "expand_merged": {"type": "boolean", "default": False, "description": "Tier-2 recall: enrich consolidated memories with their source originals (filtered to currently valid ones)"},
+                "snippet_chars": {"type": "integer", "minimum": 50, "maximum": 2000, "description": "If set, replace result content with a query-matched window of ~this many characters (FTS5 snippet for FTS hits, head slice for vec-only hits). Major token-budget saver when hits are inside large consolidated memories."},
+                "include_linked": {"type": "boolean", "default": False, "description": "Fold first-hop linked memories into each result as summaries. Saves round-trips when tracing relationships."},
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "memory_list_tags",
+        "description": "Discover existing tag conventions. Returns unique tags with usage counts and an example memory ID per tag, so callers can reuse established tag names instead of creating drifted duplicates.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Filter to tags used within this project only"},
+                "min_count": {"type": "integer", "default": 1, "minimum": 1, "description": "Only return tags used at least this many times"},
+                "order_by": {"type": "string", "enum": ["count", "alpha"], "default": "count"},
+                "limit": {"type": "integer", "default": 500, "maximum": 2000},
+            },
         },
     },
     {
@@ -197,7 +212,20 @@ def tool_search(mnemos, params):
         search_mode=params.get("search_mode"),
         limit=params.get("limit", 20),
         expand_merged=params.get("expand_merged", False),
+        snippet_chars=params.get("snippet_chars"),
+        include_linked=params.get("include_linked", False),
     )
+
+
+def tool_list_tags(mnemos, params):
+    return {
+        "tags": mnemos.list_tags(
+            project=params.get("project"),
+            min_count=params.get("min_count", 1),
+            order_by=params.get("order_by", "count"),
+            limit=params.get("limit", 500),
+        ),
+    }
 
 
 def tool_get(mnemos, params):
@@ -220,6 +248,7 @@ TOOL_DISPATCH = {
     "memory_search": tool_search,
     "memory_get": tool_get,
     "memory_update": tool_update,
+    "memory_list_tags": tool_list_tags,
 }
 
 
@@ -236,7 +265,7 @@ def send_msg(msg):
 
 
 def main():
-    sys.stderr.write("Mnemos MCP server v10.0 starting (CPU-only, no GPU required)\n")
+    sys.stderr.write("Mnemos MCP server v10.1 starting (CPU-only, no GPU required)\n")
     sys.stderr.flush()
 
     mnemos = build_mnemos()
@@ -259,7 +288,7 @@ def main():
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "mnemos", "version": "10.0.1"},
+                    "serverInfo": {"name": "mnemos", "version": "10.1.0"},
                 },
             })
             # Warm up the embedder so first search is instant

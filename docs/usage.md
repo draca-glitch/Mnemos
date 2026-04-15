@@ -47,7 +47,7 @@ For other MCP clients (Cursor, ChatGPT Desktop, Gemini, etc.), add the equivalen
 }
 ```
 
-Restart your AI client. The 4 tools (`memory_store`, `memory_search`, `memory_get`, `memory_update`) will be available.
+Restart your AI client. The 4 memory tools (`memory_store`, `memory_search`, `memory_get`, `memory_update`) plus the schema discovery tool (`memory_list_tags`) will be available.
 
 ### Disable Claude's built-in automemory (important if you use Claude)
 

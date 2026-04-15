@@ -20,6 +20,53 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.1.0] - 2026-04-16 (bandwidth controls + tag discovery)
+
+Three ergonomics features added after three hours of real at-scale use of the
+existing API surfaced specific friction points. All three are backward-compatible
+additions: existing callers see no behavior change.
+
+### Added
+
+- **`memory_list_tags` MCP tool** (5th tool). Returns every unique tag in the
+  namespace with usage count and an example memory ID. Prevents tag drift —
+  agents creating synonymous tags (`authoritative` / `canonical` / `verified`)
+  because they cannot see what already exists. This is a different category
+  of operation than the 4 memory CRUD tools: it introspects the tag schema,
+  it does not query or mutate memory content. Think of it as `\dt` alongside
+  `SELECT` rather than a new way to query.
+  - Params: `project` (optional filter), `min_count` (default 1),
+    `order_by` (`count` | `alpha`), `limit` (default 500).
+  - CLI: `mnemos tags [--project X] [--min-count N] [--order-by count|alpha]`.
+- **`snippet_chars` parameter on `memory_search`**. If set, replaces each
+  result's `content` field with a query-matched window of approximately that
+  many characters, using SQLite FTS5's built-in `snippet()` function with
+  `⟪` `⟫` match markers. Vec-only hits (no FTS match) fall back to a head
+  slice of the content. Major token-budget saver: a search hit inside a
+  6000-character consolidated memory returns ~250 bytes instead of ~6 KB.
+  Default (`None`) keeps full content for backward compatibility. Callers
+  needing the full content of a snippeted hit use `memory_get`.
+- **`include_linked` parameter on `memory_search`**. If true, folds first-hop
+  linked memories into each result as `linked_memories: [{id, project,
+  relation, strength, content}]` summaries. Saves round-trips when tracing
+  relationship graphs — one search call returns the hit plus everything it
+  links to instead of one call per link. Depth=1 only for now.
+
+### Tool count
+
+Core CRUD stays at 4 (`memory_store`, `memory_search`, `memory_get`,
+`memory_update`). `memory_list_tags` is the 5th tool but in a distinct
+category (schema discovery, not memory ops). README updated to reflect this
+framing.
+
+### Backward compatibility
+
+All three are additive. `memory_search` gains optional params that default
+to existing behavior. `memory_list_tags` is a new tool, no removal. No schema
+migration needed.
+
+---
+
 ## [10.0.1] - 2026-04-15 (single-flag CML opt-out + LoCoMo benchmark)
 
 ### Added

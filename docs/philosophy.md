@@ -14,22 +14,32 @@ Mnemos is built that way on purpose. The agent thinks. Mnemos remembers. The age
 
 Not a reasoning palace. Not an agent. Not a thinking creature. **A memory.**
 
-## Why 4 tools and not 45
+## Why 4 memory tools and not 45
 
 I have always lived by the teaching: *teach me one way to do ten things, not ten ways to do one thing.* It applies to the kitchen knife you keep sharp instead of buying ten gadgets, the language you speak fluently instead of dabbling in five, the tool in your toolbox you actually know how to use, the keyboard shortcuts you can hit without looking, the APIs you design, and the memory system you trust your AI assistant to. PUBG showed us a frying pan can be used as a weapon, not just for frying things. Same energy.
 
-Some memory systems expose upwards of **19 MCP tools** for navigating their internal metaphors: tools to enter wings, open rooms, list halls, traverse closets, follow tunnels, and so on. Reading a tool list that long honestly felt like sitting down to play *King's Quest* in 1984: *> look at door > open door > look in room > pick up key > use key with lock > open closet > look in closet*. Mnemos exposes **4**.
+Some memory systems expose upwards of **19 MCP tools** for navigating their internal metaphors: tools to enter wings, open rooms, list halls, traverse closets, follow tunnels, and so on. Reading a tool list that long honestly felt like sitting down to play *King's Quest* in 1984: *> look at door > open door > look in room > pick up key > use key with lock > open closet > look in closet*. Mnemos exposes **4 memory tools** (store, search, get, update) plus **1 schema tool** (list_tags).
 
 This is not about minimalism for its own sake. It is about how AI clients actually use tools:
 
-1. **Every tool definition burns context tokens.** The full schema for 19 tools costs hundreds to thousands of tokens on every single request, on every single session, forever. Four tools is roughly a fifth of that overhead.
-2. **More tools means more choice paralysis.** When the model has 19 ways to look something up, it has to reason about which tool fits, often picks suboptimally, and sometimes chains multiple navigation calls when one search would have answered the question. Four orthogonal tools (store, search, get, update) leave no room for ambiguity.
+1. **Every tool definition burns context tokens.** The full schema for 19 tools costs hundreds to thousands of tokens on every single request, on every single session, forever. Five tools is roughly a quarter of that overhead.
+2. **More tools means more choice paralysis.** When the model has 19 ways to look something up, it has to reason about which tool fits, often picks suboptimally, and sometimes chains multiple navigation calls when one search would have answered the question. Four orthogonal memory tools leave no room for ambiguity about which one to use for memory operations.
 3. **Surface area is bug area.** Each tool is a contract you have to maintain, document, and not break. A pluggable storage backend is hard enough without 19 tool signatures pinned to a particular metaphor.
 4. **The metaphor is not the system.** "Memory palace" is a mnemonic device for human memorization, not a database design pattern. Hierarchies are perfectly representable as `project` plus `subcategory` columns, filtered at query time. You do not need a tool called `enter_wing()` for that. It is metadata.
 
-The four Mnemos tools cover the entire CRUD-plus-search surface that any memory system needs. Hierarchical filtering, type filtering, validity windows, namespaces, layers, and rerank modes are all parameters on the existing search tool, not new tools. Adding capability means adding optional parameters, never new tools.
+The four memory tools cover the entire CRUD-plus-search surface that any memory system needs. Hierarchical filtering, type filtering, validity windows, namespaces, layers, and rerank modes are all parameters on the existing search tool, not new tools. Adding retrieval or storage capability means adding optional parameters, never new tools.
 
-If you ever feel constrained by four tools, the right reaction is "what parameter is missing from `memory_search`", not "I need a `memory_traverse_subcategory_tunnel` tool". So far the answer has always been a parameter.
+### The exception that proves the rule: `memory_list_tags`
+
+v10.1 adds a fifth tool, `memory_list_tags`. This is not a retreat from the four-tool principle; it is the principle applied honestly. Tag discovery is a *different category* of operation than memory CRUD:
+
+- It does not store, retrieve, or update memories
+- It reads metadata about the tag schema so agents can reuse existing conventions instead of inventing synonyms (`authoritative` / `canonical` / `verified`)
+- The alternative — adding a parameter to `memory_search` — would force an overloaded query semantics (empty query returns tag aggregate?) that is worse than a purpose-built tool
+
+Think of it as `\dt` in psql: it lists tables, it is not another way to `SELECT`. Same spirit of "tool per operation category," different operation category. If future work adds a `memory_list_projects` or `memory_list_subcategories`, those belong in the same schema-discovery category rather than bloating the CRUD surface. Five tools is the new ceiling: four for memory, one (or an incremental handful) for schema introspection.
+
+If you ever feel constrained by the memory tools, the right reaction is still "what parameter is missing from `memory_search`", not "I need a `memory_traverse_subcategory_tunnel` tool". So far the answer has always been a parameter. `memory_list_tags` is the rare case where the answer genuinely could not be a parameter, because the operation is not memory retrieval at all.
 
 ## Adaptive learning: how Mnemos gets to know you
 
