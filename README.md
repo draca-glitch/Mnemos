@@ -36,6 +36,8 @@ Then [MemPalace](https://github.com/MemPalace/mempalace) surfaced, claiming stat
 
 That result is what tipped this from "private side project I had no plans to share" into "I should clean this up and put it on GitHub for public scrutiny". If you are reading this README, the MemPalace comparison is the reason it exists at all.
 
+> **A note on scope.** Mnemos is a personal memory system. It is not trying to compete with production-grade multi-tenant memory services like [Mastra](https://mastra.ai), [Mem0](https://mem0.ai), [Supermemory](https://supermemory.ai), [Hindsight](https://hindsight.ai), and the other commercial systems in this space. Those are built for teams, hosted APIs, enterprise SLAs, and commercial support contracts, and Mnemos will not hold a candle to them on that axis. **For personal Claude (or any MCP-compatible AI) memory on a single machine, though, it is more than enough, and that is the audience it is built for.** If you are running memory for a support-agent fleet with thousands of customers, reach for one of the commercial options instead. The benchmark comparisons below are about the retrieval-recall axis specifically, the one axis where a personal tool and a multi-tenant service can meaningfully be measured against each other, not a claim that Mnemos replaces what they do.
+
 I am comparing against MemPalace specifically because they are, by their own account and by the articles written about them, the current number one in the AI memory space. If you are going to benchmark yourself, you benchmark against whoever is on top. This is not personal; it is just how comparisons work. Here is how the two systems actually stack up:
 
 |                              | MemPalace | **Mnemos** |
