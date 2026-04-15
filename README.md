@@ -25,7 +25,18 @@ pip install -e .
 claude mcp add -s user mnemos $(pwd)/venv/bin/mnemos serve
 ```
 
-Restart your AI client. The 4 MCP tools (`memory_store`, `memory_search`, `memory_get`, `memory_update`) are now available.
+**First run downloads ~800 MB of ONNX models** (FastEmbed `multilingual-e5-large` embedder + Jina Reranker v2) into `~/.cache/fastembed/`. One-time cost, no GPU, no API key. Subsequent runs are offline.
+
+**Add the agent instructions to your AI client.** Having the MCP tools available is not enough; the agent needs to be told *when* to search, *when* to store, and *what format* to use. Copy the ready-made block from [docs/agent-instructions.md](docs/agent-instructions.md) into your `~/.claude/CLAUDE.md` (Claude Code), your project's `CLAUDE.md`, `.cursorrules` (Cursor), or your Claude Desktop custom instructions. Without this, the model has the tools but will not use them proactively.
+
+**If you use Claude Code, disable its built-in automemory** so the two stores don't compete:
+
+```json
+// ~/.claude/settings.json
+{ "autoMemoryEnabled": false }
+```
+
+Restart your AI client. The 4 MCP tools (`memory_store`, `memory_search`, `memory_get`, `memory_update`) are now available and the agent knows how to use them.
 
 For other clients (Cursor, ChatGPT Desktop, Gemini), CLI usage, hooks, and the optional Nyx consolidation cycle, see [docs/usage.md](docs/usage.md). Full five-minute walkthrough in [QUICKSTART.md](QUICKSTART.md).
 
