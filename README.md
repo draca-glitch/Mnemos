@@ -40,6 +40,8 @@ That result is what tipped this from "private side project I had no plans to sha
 
 I am comparing against MemPalace specifically because they are, by their own account and by the articles written about them, the current number one in the AI personal memory space. If you are going to benchmark yourself, you benchmark against whoever is on top. This is not personal; it is just how comparisons work. Here is how the two systems actually stack up:
 
+> *Note: the more I read about MemPalace and dig into their actual architecture and reproducible benchmarks, the less the "number one" framing seems to hold up. The headline articles and the substance underneath are not telling the same story. I am leaving the comparison in because it is the reason this repo exists, but treat the "stack up" framing below as historical context for why Mnemos got published, not as a current claim that MemPalace is the bar to clear.*
+
 |                              | MemPalace | **Mnemos** |
 |---|---|---|
 | Storage backend              | ChromaDB only | **SQLite (default), Qdrant, Postgres-ready** |
