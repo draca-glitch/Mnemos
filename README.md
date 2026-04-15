@@ -904,7 +904,7 @@ LongMemEval is constructed from one-shot conversation sessions and does not exer
 
 A few things worth noting about this table:
 
-1. **Mnemos appears to be the only memory system in the field publishing a complete R@1 / R@3 / R@5 / R@10 sweep on LongMemEval.** MemPalace publishes only R@5 plus per-type R@10, and almost everyone else publishes only LLM-judge QA accuracy (a different metric that bundles retrieval and generation). At every k where competitors publish a comparable retrieval-recall number, Mnemos is on top.
+1. **Mnemos appears to be the only memory system in the field publishing a complete R@1 / R@3 / R@5 / R@10 sweep on LongMemEval.** MemPalace publishes only R@5 plus per-type R@10, and almost everyone else publishes only LLM-judge QA accuracy (a different metric that bundles retrieval and generation).
 
 2. The competitor architectural notes are based on each system's own published documentation and benchmark methodology, not on source code audits. I have not read every competitor's source. The Mnemos source is in this repository and you can verify everything in the Mnemos rows directly.
 
