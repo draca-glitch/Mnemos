@@ -97,6 +97,19 @@ DEFAULT_DB_PATH = os.environ.get(
 )
 DEFAULT_NAMESPACE = "default"
 
+# --- CML mode ---
+# "on"  (default): MCP tool description teaches CML, Nyx cycle cemelifies on
+#                  merge and uses CML-prefixed insights on synthesis, dedup
+#                  matches on CML subject prefixes, the whole system assumes
+#                  CML as the default storage convention.
+# "off": prose-only deployment. MCP tool description stops teaching CML,
+#        Nyx cycle merges and synthesis prompts instruct prose output,
+#        dedup falls back to FTS + vector signals only (no CML-subject
+#        branch). Single coordinated flag; flip everything at once.
+CML_MODE = os.environ.get("MNEMOS_CML_MODE", "on").lower()
+if CML_MODE not in ("on", "off"):
+    CML_MODE = "on"
+
 # --- SQL templates (pre-built from constants above, used by SQLiteStore) ---
 DAYS_AGE_SQL = "julianday('now','localtime') - julianday(COALESCE(m.last_accessed, m.created_at))"
 

@@ -117,14 +117,18 @@ def test_stats(mnemos_with_tmpdb):
 
 
 def test_cml_dedup_fires_on_same_subject(mnemos_with_tmpdb):
+    from mnemos.constants import CML_MODE
+    if CML_MODE == "off":
+        pytest.skip("CML-subject dedup is disabled when MNEMOS_CML_MODE=off")
+
     m = mnemos_with_tmpdb
     r1 = m.store_memory(project="test",
-                        content="F:Ethereum wallet 0x1234abcd for BRF")
+                        content="F:Ethereum wallet 0x0000000abcd for project")
     assert r1.get("status") == "stored"
 
     # Same CML type + subject + very similar content: dedup should flag
     r2 = m.store_memory(project="test",
-                        content="F:Ethereum wallet 0x1234abcd for BRF, verified")
+                        content="F:Ethereum wallet 0x0000000abcd for project, verified")
     # Either flagged as duplicate (existing_id set) or stored (weak rerank signal);
     # whichever, the "cml" method should be in the methods list IF it is flagged
     if r2.get("existing_id"):
@@ -140,3 +144,33 @@ def test_missing_project_or_content_errors(mnemos_with_tmpdb):
 def test_get_returns_error_on_missing_id(mnemos_with_tmpdb):
     m = mnemos_with_tmpdb
     assert "error" in m.get(99999)
+
+
+def test_cml_mode_env_var_recognized():
+    """The MNEMOS_CML_MODE env var feeds into the CML_MODE constant."""
+    import importlib
+    from mnemos import constants
+    importlib.reload(constants)
+    assert constants.CML_MODE in ("on", "off")
+
+
+def test_mcp_tool_description_respects_cml_mode(monkeypatch):
+    """memory_store tool description changes with MNEMOS_CML_MODE."""
+    import importlib
+    import mnemos.constants as constants_mod
+    import mnemos.mcp_server as server_mod
+
+    # Prose mode: description should NOT mention CML
+    monkeypatch.setenv("MNEMOS_CML_MODE", "off")
+    importlib.reload(constants_mod)
+    importlib.reload(server_mod)
+    store_tool = next(t for t in server_mod.TOOL_DEFINITIONS if t["name"] == "memory_store")
+    assert "CML" not in store_tool["description"]
+    assert "prose" in store_tool["description"].lower()
+
+    # Default mode: description SHOULD mention CML
+    monkeypatch.setenv("MNEMOS_CML_MODE", "on")
+    importlib.reload(constants_mod)
+    importlib.reload(server_mod)
+    store_tool = next(t for t in server_mod.TOOL_DEFINITIONS if t["name"] == "memory_store")
+    assert "CML" in store_tool["description"]

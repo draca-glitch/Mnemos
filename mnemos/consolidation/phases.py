@@ -27,14 +27,25 @@ from collections import defaultdict
 import numpy as np
 
 from .prompts import (
-    MERGE_SYSTEM, WEAVE_SYSTEM, CONTRADICT_SYSTEM,
-    SYNTHESIS_SYSTEM, TRIAGE_SYSTEM,
+    MERGE_SYSTEM, MERGE_SYSTEM_PROSE,
+    WEAVE_SYSTEM, CONTRADICT_SYSTEM,
+    SYNTHESIS_SYSTEM, SYNTHESIS_SYSTEM_PROSE, TRIAGE_SYSTEM,
 )
 from ..embed import embed as fastembed_embed_raw, text_hash, prep_memory_text
 from ..constants import (
     SKIP_IMPORTANCE, MAX_CLUSTER_SIZE,
-    FASTEMBED_MODEL, FASTEMBED_DIMS,
+    FASTEMBED_MODEL, FASTEMBED_DIMS, CML_MODE,
 )
+
+
+def _merge_prompt():
+    """Pick the prose or CML merge prompt based on MNEMOS_CML_MODE."""
+    return MERGE_SYSTEM_PROSE if CML_MODE == "off" else MERGE_SYSTEM
+
+
+def _synthesis_prompt():
+    """Pick the prose or CML synthesis prompt based on MNEMOS_CML_MODE."""
+    return SYNTHESIS_SYSTEM_PROSE if CML_MODE == "off" else SYNTHESIS_SYSTEM
 from .llm import opus_chat, is_configured as llm_is_configured
 
 
@@ -297,11 +308,11 @@ def merge_cluster(cluster_ids, mem_by_id):
                 f"roughly {target} characters (±20%): preserve every specific (names, numbers, "
                 f"dates, paths, amounts, decisions, preferences). Only remove content that is "
                 f"genuine overlap between the two memories (same fact stated twice).\n\n"
-                f"Merge these 2 related memories into one CML block:\n\n{body}"
+                f"Merge these 2 related memories into one {'prose paragraph' if CML_MODE == 'off' else 'CML block'}:\n\n{body}"
             )
             merged = opus_chat(
                 [
-                    {"role": "system", "content": MERGE_SYSTEM},
+                    {"role": "system", "content": _merge_prompt()},
                     {"role": "user", "content": user_msg},
                 ],
                 max_tokens=max(1024, total_chars),
@@ -630,11 +641,15 @@ def phase_weave(conn, all_embeddings, mem_by_id, is_surge, execute=False):
             # Store bridge insight as a new memory
             if insight:
                 tag_str = f"synthesized,nyx-cycle,bridge,src:nyx-{time.strftime('%Y-%m-%d')}"
+                if CML_MODE == "off":
+                    content = f"Bridge between memory #{mid_a} and #{mid_b}: {insight}"
+                else:
+                    content = f"L: Bridge #{mid_a}↔#{mid_b}: {insight}"
                 conn.execute(
                     "INSERT INTO memories (project, content, tags, importance, "
                     "type, layer, consolidation_lock) "
                     "VALUES ('personal', ?, ?, 5, 'learning', 'semantic', 1)",
-                    (f"L: Bridge #{mid_a}↔#{mid_b}: {insight}", tag_str),
+                    (content, tag_str),
                 )
                 conn.commit()
                 stats["insights_stored"] += 1
@@ -879,7 +894,7 @@ def phase_synthesize(conn, all_embeddings, mem_by_id, execute=False):
 
     result = opus_chat(
         [
-            {"role": "system", "content": SYNTHESIS_SYSTEM},
+            {"role": "system", "content": _synthesis_prompt()},
             {"role": "user", "content": prompt},
         ],
         max_tokens=1024,
@@ -1009,10 +1024,18 @@ def _select_nyx_packet(conn, active_memories, embeddings):
 
 
 def _parse_insights(text):
-    """Parse L: prefixed insights from synthesis output."""
+    """Parse insights from synthesis output.
+
+    CML mode: insights are L:-prefixed lines (possibly with continuation lines).
+    Prose mode: insights are blank-line-separated paragraphs.
+    """
+    if CML_MODE == "off":
+        # Split on blank lines; each non-empty chunk is one insight.
+        chunks = [c.strip() for c in text.strip().split("\n\n")]
+        return [c for c in chunks if c]
+
     insights = []
     current = []
-
     for line in text.strip().split("\n"):
         line = line.strip()
         if line.startswith("L:") or line.startswith("L :"):
@@ -1024,5 +1047,4 @@ def _parse_insights(text):
 
     if current:
         insights.append("\n".join(current))
-
     return insights

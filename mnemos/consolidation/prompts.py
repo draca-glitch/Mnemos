@@ -1,8 +1,15 @@
 """
 LLM prompts for the Nyx Cycle consolidation system.
 
-Separated from logic for easy tuning. All prompts use CML notation
-and are designed for Claude Opus via DO Gradient API.
+Separated from logic for easy tuning. Two variants exist for merge and
+synthesis, picked at call time by MNEMOS_CML_MODE:
+  "on"  (default): CML-output prompts (MERGE_SYSTEM, SYNTHESIS_SYSTEM)
+  "off":           prose-output prompts (MERGE_SYSTEM_PROSE,
+                   SYNTHESIS_SYSTEM_PROSE), same preservation rules, no
+                   CML prefixes or relation symbols in the output
+
+Classification prompts (WEAVE_SYSTEM, CONTRADICT_SYSTEM, TRIAGE_SYSTEM)
+emit structured labels, not CML, and are unaffected by the mode switch.
 
 CML notation key:
   D: decision, C: contact, F: config/fact, L: learning, P: preference, W: warning
@@ -45,6 +52,37 @@ CML notation. Prefixes: D: decision, C: contact, F: config/fact, L: learning, P:
 Use ; to chain facts densely on one line when topic is shared. Newline for distinct topics. Pack more facts per line than per memory.
 
 Output ONLY the CML text. No explanations, no fencing, no preamble, no self-commentary."""
+
+
+MERGE_SYSTEM_PROSE = """You consolidate memories into one paragraph of clear English prose. Your job is UNIQUE INFORMATION PRESERVATION with natural writing.
+
+THE ONE RULE YOU MUST NOT BREAK:
+Every unique piece of information from any input memory must survive in your output. If a detail exists in ANY input and does NOT exist in your output, you have failed the merge. Overlap between memories (same fact stated twice) can be collapsed to one sentence. Content unique to a single input memory must NEVER be dropped, ever, for any reason, regardless of how minor it seems.
+
+Before emitting your output, audit yourself: for each input memory, can you point to every distinct fact, specific, or detail it contained and show where it appears in the output? If not, add what's missing.
+
+WHAT TO PRESERVE (non-negotiable):
+- Every name (person, service, product, tool, place)
+- Every number, amount, quantity, version, measurement
+- Every date, time, duration, deadline
+- Every path, URL, IP, port, ID, identifier
+- Every decision and its recorded reason
+- Every distinct event or transaction (3 separate events means 3 items mentioned, not "some events")
+- Every contact detail
+- Every stated preference
+- Every configuration value
+- Every distinct nuance, caveat, or qualifier
+
+WHAT TO COMPRESS (shrink these):
+- Redundant phrasing between overlapping memories (same fact twice = one sentence)
+- Reasoning-history that no longer matters, meta-commentary
+- Explanatory filler around a fact (keep the fact, drop the explanation)
+
+SIZE: output should be shorter than the concatenated inputs (redundancy compresses well), but growth with cluster size is expected. 6 memories of distinct content cannot fit into 1 memory-sized output without data loss. Do not truncate to hit any arbitrary size.
+
+CONFLICTS: most recent value wins, briefly note the prior value.
+
+Write in natural clear English prose. Do NOT use CML prefixes (D:, C:, F:, L:, P:, W:) or relation symbols (→, ∵, ∴, △, ⚠, ↔). Output ONLY the prose text. No explanations, no fencing, no preamble, no self-commentary."""
 
 # --- Phase 2: Thematic Weaving ---
 
@@ -119,6 +157,29 @@ end of this prompt to help you reason about patterns. If no profile is given,
 infer cautiously and prefer observations over claims.
 
 Output ONLY the CML insights. No preamble, no markdown."""
+
+
+SYNTHESIS_SYSTEM_PROSE = """You are performing "Nyx consolidation" on a person's memory corpus.
+
+You see memories spanning multiple life domains. Health, relationships, work, technology, philosophy, writing, finances, etc. Your job is to notice what the person themselves might not have noticed: patterns, recurring themes, behavioral tendencies, tensions, and cross-domain connections.
+
+Generate 2-4 concise insights. Each MUST:
+- Connect at least 2 different categories (e.g., work patterns reflecting in relationships)
+- Be genuinely novel, not a restatement of any single memory
+- Be framed as an observation, not advice
+- Be written as a single clear English sentence (no CML prefixes, no relation symbols)
+- Include which memory IDs informed the insight, in parentheses
+
+Separate insights with a blank line so the parser can detect them.
+
+Example output (illustrative only, with placeholder memory IDs):
+Pattern: technical preference for explicit configuration (#101, #142) mirrors decision-making style in personal habits (#118); both may stem from a preference for low-ambiguity systems.
+
+Tension: stated preference for minimalism in tooling (#205) while accumulating broad infrastructure responsibilities (#211); unresolved question of whether the minimalism is aspirational or actual.
+
+You may receive a MNEMOS_USER_PROFILE description of who the user is at the end of this prompt to help you reason about patterns. If no profile is given, infer cautiously and prefer observations over claims.
+
+Output ONLY the prose insights separated by blank lines. No preamble, no markdown, no CML prefixes."""
 
 # --- Phase 0: Triage ---
 

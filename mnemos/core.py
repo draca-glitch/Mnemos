@@ -26,7 +26,7 @@ from .constants import (
     DEDUP_RERANK_THRESHOLD, CONTRADICTION_VEC_THRESHOLD,
     CONTRADICTION_RERANK_THRESHOLD, DEFAULT_NAMESPACE,
     DEFAULT_ENABLE_RERANK,
-    VALID_TYPES, VALID_LAYERS,
+    VALID_TYPES, VALID_LAYERS, CML_MODE,
 )
 
 
@@ -162,7 +162,7 @@ class Mnemos:
         # we need a raw conn for the LIKE scan; other backends simply
         # skip this tier and rely on FTS + vector.
         cml_type, subject = _extract_cml_subject(content)
-        if cml_type and subject and hasattr(self.store, "_get_conn"):
+        if cml_type and subject and CML_MODE != "off" and hasattr(self.store, "_get_conn"):
             try:
                 conn = self.store._get_conn()
                 pattern = f"{cml_type}:{subject}%"

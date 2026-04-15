@@ -20,6 +20,44 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.0.1] - 2026-04-15 (single-flag CML opt-out)
+
+### Added
+- **`MNEMOS_CML_MODE` environment variable**, the unified switch that the
+  v10.0.0 README described as "Planned" is now shipped. `MNEMOS_CML_MODE=on`
+  (default) keeps the original behavior. `MNEMOS_CML_MODE=off` flips all
+  CML-related surfaces in one place:
+  - The MCP `memory_store` tool description drops the CML format guidance
+    and tells the agent to write clear natural prose instead
+  - The Nyx cycle's merge prompt swaps in `MERGE_SYSTEM_PROSE`, which keeps
+    every unique-fact-preservation rule but instructs prose output, no CML
+    prefixes or relation symbols
+  - The Nyx cycle's synthesis prompt swaps in `SYNTHESIS_SYSTEM_PROSE`,
+    insights are emitted as blank-line-separated prose paragraphs rather
+    than `L:`-prefixed CML lines
+  - `_parse_insights` reads either format based on the mode
+  - Phase 3 Weave's bridge-insight memory content drops the `L:` prefix
+  - `Mnemos._unified_dedup`'s CML-subject branch is gated off; dedup
+    falls back to FTS + vector signals (both still run)
+  - `consolidation_lock` field descriptions on the `memory_store` and
+    `memory_update` MCP tools swap from "prevent cemelification" to
+    "prevent merging" since cemelification does not happen in prose mode
+  Single coordinated flag, not a collection of half-matched overrides.
+  README now also calls out the one surface Mnemos cannot toggle: the
+  user's own AI-client system prompt (Claude Code `CLAUDE.md`, Cursor
+  rules, etc.). If you have added "write in CML" instructions there,
+  remove them manually when switching to prose mode.
+- Prose variants of the merge and synthesis prompts in
+  `mnemos/consolidation/prompts.py` (`MERGE_SYSTEM_PROSE`,
+  `SYNTHESIS_SYSTEM_PROSE`) that preserve the same atomic-fact-preservation
+  rules as the CML variants with natural-language output format.
+
+### Changed
+- README "Soft convention, hard rewards" callout updated from "Planned" to
+  document the now-implemented switch and its exact per-surface effects.
+
+---
+
 ## [10.0.0] - 2026-04-15 (first public release)
 
 This version is essentially the packaging and documentation work to make

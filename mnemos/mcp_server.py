@@ -18,7 +18,43 @@ import os
 import sys
 
 from .core import Mnemos
-from .constants import DEFAULT_PROJECTS, VALID_TYPES, VALID_LAYERS, DEFAULT_NAMESPACE
+from .constants import DEFAULT_PROJECTS, VALID_TYPES, VALID_LAYERS, DEFAULT_NAMESPACE, CML_MODE
+
+
+_STORE_DESC_CML = (
+    "Store a new memory. Auto-detects duplicates and contradictions.\n\n"
+    "FORMAT GUIDANCE, when to use CML vs prose:\n"
+    "  Use CML (Compressed Memory Language) for: facts, decisions, contacts, configs, preferences, warnings. "
+    "CML prefixes: D:(decision) C:(contact) F:(fact) L:(learning) P:(preference) W:(warning). "
+    "Symbols: → ↔ ← ∵ ∴ △ ⚠ @ ✓ ✗ ~ ∅ … ; > #N. Dense, one-line-per-fact chains with ;\n"
+    "  Use plain prose for: runbooks with ordered steps, long-form reference documents, code blocks, "
+    "creative writing, multi-paragraph narrative. These suffer from CML compression. "
+    "For prose-format memories, set consolidation_lock=true (via memory_update after store) "
+    "to prevent the Nyx cycle from cemelifying them later.\n"
+    "  When in doubt: if the content is primarily a set of atomic facts → CML. "
+    "If it has essential ordering, structure, or code → prose."
+)
+
+_STORE_DESC_PROSE = (
+    "Store a new memory. Auto-detects duplicates and contradictions. "
+    "Write the content as clear natural prose; keep it concise (one or two "
+    "sentences for a single fact, a short paragraph for a cluster of related "
+    "facts). No special formatting required; Mnemos indexes plain text."
+)
+
+_STORE_DESCRIPTION = _STORE_DESC_PROSE if CML_MODE == "off" else _STORE_DESC_CML
+
+_CONTENT_DESC_CML = "The memory content. Use CML for facts/decisions/configs; use prose for runbooks/docs/code (see description)."
+_CONTENT_DESC_PROSE = "The memory content as clear natural prose."
+_CONTENT_DESCRIPTION = _CONTENT_DESC_PROSE if CML_MODE == "off" else _CONTENT_DESC_CML
+
+_LOCK_DESC_STORE_CML = "Set true for prose-format content (runbooks, long docs, code blocks) to prevent the Nyx cycle from cemelifying it."
+_LOCK_DESC_STORE_PROSE = "Set true to prevent the Nyx cycle from merging this memory with others during consolidation."
+_LOCK_DESCRIPTION_STORE = _LOCK_DESC_STORE_PROSE if CML_MODE == "off" else _LOCK_DESC_STORE_CML
+
+_LOCK_DESC_UPDATE_CML = "Set true to prevent the Nyx cycle from cemelifying or merging this memory."
+_LOCK_DESC_UPDATE_PROSE = "Set true to prevent the Nyx cycle from merging this memory with others during consolidation."
+_LOCK_DESCRIPTION_UPDATE = _LOCK_DESC_UPDATE_PROSE if CML_MODE == "off" else _LOCK_DESC_UPDATE_CML
 
 
 def build_mnemos():
@@ -60,24 +96,12 @@ def build_mnemos():
 TOOL_DEFINITIONS = [
     {
         "name": "memory_store",
-        "description": (
-            "Store a new memory. Auto-detects duplicates and contradictions.\n\n"
-            "FORMAT GUIDANCE, when to use CML vs prose:\n"
-            "  Use CML (Compressed Memory Language) for: facts, decisions, contacts, configs, preferences, warnings. "
-            "CML prefixes: D:(decision) C:(contact) F:(fact) L:(learning) P:(preference) W:(warning). "
-            "Symbols: → ↔ ← ∵ ∴ △ ⚠ @ ✓ ✗ ~ ∅ … ; > #N. Dense, one-line-per-fact chains with ;\n"
-            "  Use plain prose for: runbooks with ordered steps, long-form reference documents, code blocks, "
-            "creative writing, multi-paragraph narrative. These suffer from CML compression. "
-            "For prose-format memories, set consolidation_lock=true (via memory_update after store) "
-            "to prevent the Nyx cycle from cemelifying them later.\n"
-            "  When in doubt: if the content is primarily a set of atomic facts → CML. "
-            "If it has essential ordering, structure, or code → prose."
-        ),
+        "description": _STORE_DESCRIPTION,
         "inputSchema": {
             "type": "object",
             "properties": {
                 "project": {"type": "string", "description": "Top-level category (e.g., dev, finance, personal)"},
-                "content": {"type": "string", "description": "The memory content. Use CML for facts/decisions/configs; use prose for runbooks/docs/code (see description)."},
+                "content": {"type": "string", "description": _CONTENT_DESCRIPTION},
                 "tags": {"type": "string", "description": "Comma-separated tags"},
                 "importance": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
                 "type": {"type": "string", "enum": list(sorted(VALID_TYPES)), "default": "fact"},
@@ -86,7 +110,7 @@ TOOL_DEFINITIONS = [
                 "subcategory": {"type": "string", "description": "Hierarchical sub-category (e.g., 'crypto' under finance)"},
                 "valid_from": {"type": "string", "description": "ISO date when fact becomes valid"},
                 "valid_until": {"type": "string", "description": "ISO date when fact expires"},
-                "consolidation_lock": {"type": "boolean", "default": False, "description": "Set true for prose-format content (runbooks, long docs, code blocks) to prevent the Nyx cycle from cemelifying it."},
+                "consolidation_lock": {"type": "boolean", "default": False, "description": _LOCK_DESCRIPTION_STORE},
             },
             "required": ["project", "content"],
         },
@@ -137,7 +161,7 @@ TOOL_DEFINITIONS = [
                 "subcategory": {"type": "string"},
                 "valid_from": {"type": "string"},
                 "valid_until": {"type": "string"},
-                "consolidation_lock": {"type": "boolean", "description": "Set true to prevent the Nyx cycle from cemelifying or merging this memory."},
+                "consolidation_lock": {"type": "boolean", "description": _LOCK_DESCRIPTION_UPDATE},
             },
             "required": ["id"],
         },
@@ -235,7 +259,7 @@ def main():
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "mnemos", "version": "10.0.0"},
+                    "serverInfo": {"name": "mnemos", "version": "10.0.1"},
                 },
             })
             # Warm up the embedder so first search is instant
