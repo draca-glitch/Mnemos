@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mnemos"
-version = "10.1.0"
+version = "10.1.1"
 description = "Persistent memory system for AI agents with reproducible benchmarks (98.94-99.15% R@5 on LongMemEval, CPU-only, MCP-native)"
 readme = "README.md"
 requires-python = ">=3.11"

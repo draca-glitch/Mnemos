@@ -20,6 +20,27 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.1.1] - 2026-04-16 (embed_vec schema compatibility)
+
+### Fixed
+
+- **`SQLiteStore` now supports both embed_vec schema variants** found in the
+  wild. sqlite-vec vec0 virtual tables can be declared either as
+  `vec0(embedding float[N])` (Mnemos default, rowid-based PK) or
+  `vec0(id INTEGER PRIMARY KEY, embedding float[N])` (explicit-id PK). The
+  latter does NOT expose `rowid` as a queryable column, which broke all
+  `search_vec` / `_store_embedding` / hard-delete paths when Mnemos was
+  pointed at a database created by other tooling using the explicit-id
+  pattern.
+  Fix: schema detection at first use, cached per connection
+  (`_get_vec_join_col`). `search_vec` picks `ev.id` or `ev.rowid`
+  automatically. `_store_embedding` uses the corresponding insert flow
+  (pre-assign meta_id then insert vec with explicit id, vs insert vec
+  first then capture lastrowid). Zero migration required for either
+  schema; fresh Mnemos installs continue to use the rowid-based default.
+
+---
+
 ## [10.1.0] - 2026-04-16 (bandwidth controls + tag discovery)
 
 Three ergonomics features added after three hours of real at-scale use of the

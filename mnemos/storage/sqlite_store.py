@@ -64,6 +64,11 @@ class SQLiteStore(MnemosStore):
         super().__init__(namespace=namespace)
         self.db_path = db_path or DEFAULT_DB_PATH
         self._conn: Optional[sqlite3.Connection] = None
+        # Lazy-resolved join column for embed_vec. sqlite-vec vec0 virtual
+        # tables expose either `rowid` (when only `embedding` column is
+        # declared) or `id` (when declared as `id INTEGER PRIMARY KEY`).
+        # Both schemas exist in the wild; we detect at first use and cache.
+        self._vec_join_col: Optional[str] = None
 
     # --- Connection management ---
 
@@ -215,30 +220,71 @@ class SQLiteStore(MnemosStore):
             self._store_embedding(mid, embedding)
         return mid
 
-    def _store_embedding(self, mid: int, embedding: list):
-        """Insert or replace the embedding for a memory."""
+    def _get_vec_join_col(self) -> str:
+        """Detect which column embed_vec uses for the PK/join.
+
+        Returns 'id' for schemas declared as `vec0(id INTEGER PRIMARY KEY,
+        embedding float[N])` or 'rowid' for `vec0(embedding float[N])`.
+        Cached after first resolution per connection.
+        """
+        if self._vec_join_col is not None:
+            return self._vec_join_col
         conn = self._get_conn()
+        try:
+            conn.execute("SELECT id FROM embed_vec LIMIT 0").fetchone()
+            self._vec_join_col = "id"
+        except sqlite3.OperationalError:
+            self._vec_join_col = "rowid"
+        return self._vec_join_col
+
+    def _store_embedding(self, mid: int, embedding: list):
+        """Insert or replace the embedding for a memory.
+
+        Handles both embed_vec schemas (implicit rowid vs explicit id)
+        so the same code works against fresh Mnemos-created DBs and
+        against DBs created by other tooling that declares an explicit
+        `id INTEGER PRIMARY KEY` column on the vec0 virtual table.
+        """
+        conn = self._get_conn()
+        join_col = self._get_vec_join_col()
         # Remove existing if any
         existing = conn.execute(
             "SELECT id FROM embed_meta WHERE source_db = ? AND source_id = ?",
             (self.SOURCE_KEY, mid),
         ).fetchone()
         if existing:
-            conn.execute("DELETE FROM embed_vec WHERE rowid = ?", (existing["id"],))
+            conn.execute(
+                f"DELETE FROM embed_vec WHERE {join_col} = ?",
+                (existing["id"],),
+            )
             conn.execute(
                 "DELETE FROM embed_meta WHERE source_db = ? AND source_id = ?",
                 (self.SOURCE_KEY, mid),
             )
-        # Insert vector
-        cur = conn.execute(
-            "INSERT INTO embed_vec(embedding) VALUES (?)",
-            (_serialize_vec(embedding),),
-        )
-        vec_id = cur.lastrowid
-        conn.execute(
-            "INSERT INTO embed_meta (id, source_db, source_id) VALUES (?, ?, ?)",
-            (vec_id, self.SOURCE_KEY, mid),
-        )
+        if join_col == "id":
+            # Explicit-id schema: pre-insert into embed_meta, then use its
+            # auto-assigned id as the vec0 row id
+            cur = conn.execute(
+                "INSERT INTO embed_meta (source_db, source_id) VALUES (?, ?)",
+                (self.SOURCE_KEY, mid),
+            )
+            meta_id = cur.lastrowid
+            conn.execute(
+                "INSERT INTO embed_vec(id, embedding) VALUES (?, ?)",
+                (meta_id, _serialize_vec(embedding)),
+            )
+        else:
+            # Implicit-rowid schema: insert vec first, use its rowid as the
+            # pre-declared id for embed_meta
+            cur = conn.execute(
+                "INSERT INTO embed_vec(embedding) VALUES (?)",
+                (_serialize_vec(embedding),),
+            )
+            vec_id = cur.lastrowid
+            conn.execute(
+                "INSERT INTO embed_meta (id, source_db, source_id) VALUES (?, ?, ?)",
+                (vec_id, self.SOURCE_KEY, mid),
+            )
         conn.commit()
 
     def get_memory(self, mid: int, increment_access: bool = True) -> Optional[Memory]:
@@ -295,13 +341,17 @@ class SQLiteStore(MnemosStore):
     def delete_memory(self, mid: int, hard: bool = False) -> bool:
         conn = self._get_conn()
         if hard:
+            join_col = self._get_vec_join_col()
             # Remove embedding first
             existing = conn.execute(
                 "SELECT id FROM embed_meta WHERE source_db = ? AND source_id = ?",
                 (self.SOURCE_KEY, mid),
             ).fetchone()
             if existing:
-                conn.execute("DELETE FROM embed_vec WHERE rowid = ?", (existing["id"],))
+                conn.execute(
+                    f"DELETE FROM embed_vec WHERE {join_col} = ?",
+                    (existing["id"],),
+                )
                 conn.execute(
                     "DELETE FROM embed_meta WHERE source_db = ? AND source_id = ?",
                     (self.SOURCE_KEY, mid),
@@ -369,12 +419,13 @@ class SQLiteStore(MnemosStore):
                    limit=50):
         conn = self._get_conn()
         ns = namespace or self.namespace
+        join_col = self._get_vec_join_col()
 
         # Brute-force vec search (sqlite-vec)
         rows = conn.execute(
-            """SELECT em.source_id, ev.distance
+            f"""SELECT em.source_id, ev.distance
                FROM embed_vec ev
-               JOIN embed_meta em ON em.id = ev.rowid
+               JOIN embed_meta em ON em.id = ev.{join_col}
                WHERE em.source_db = ? AND ev.embedding MATCH ? AND k = ?
                ORDER BY ev.distance""",
             (self.SOURCE_KEY, _serialize_vec(embedding), limit * 3),
