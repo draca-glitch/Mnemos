@@ -650,7 +650,8 @@ of the 50-100 tok/s you would get on a GPU.
 For Mnemos that is completely fine. The Nyx cycle does not care if Phase 2
 takes 30 seconds or 5 minutes per merge cluster, as long as the merge is
 correct. **Mnemos remains GPU-free end to end**, including consolidation,
-if you choose a local model.
+if you choose a local model, or if you choose not to run the consolidation
+cycles at all (store and retrieve work without any LLM, as covered above).
 
 To enable LLM-powered phases, set environment variables for any OpenAI-compatible
 endpoint:
