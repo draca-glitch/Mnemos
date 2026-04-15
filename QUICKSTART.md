@@ -85,5 +85,6 @@ Any OpenAI-compatible endpoint works (OpenAI, Anthropic via proxy, Ollama, OpenR
 
 - Full features and rationale: [README.md](README.md)
 - Architecture deep-dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Copy-paste agent instructions for your `CLAUDE.md` / Cursor rules / custom system prompt: [docs/agent-instructions.md](docs/agent-instructions.md)
 - Reproducible benchmarks: [benchmarks/README.md](benchmarks/README.md)
 - Version history: [CHANGELOG.md](CHANGELOG.md)
