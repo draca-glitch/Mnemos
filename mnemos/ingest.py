@@ -69,10 +69,48 @@ def register_extractor(extension: str, fn: Callable[[Path], Optional[str]]) -> N
     _extractors[extension.lower()] = fn
 
 
+_MAX_READ_BYTES = 50 * 1024 * 1024  # 50 MB — larger files should be chunked
+                                     # externally or have a custom extractor
+                                     # registered; not worth holding half a GB
+                                     # of text in RAM during ingest.
+
+
 def _read_text_file(path: Path) -> Optional[str]:
-    """Default extractor for plain-text files."""
+    """Default extractor for plain-text files.
+
+    Tries UTF-8 strict first so mojibake is surfaced as a skip rather than
+    silently replaced with U+FFFD. Falls back to permissive read only with
+    an explicit encoding="utf-8", errors="replace" on the SECOND attempt
+    so callers can see (via stderr or logs) that something was lossy.
+    Caps at _MAX_READ_BYTES to prevent RAM exhaustion on oversized inputs.
+    """
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
+        size = path.stat().st_size
+    except Exception:
+        return None
+    if size > _MAX_READ_BYTES:
+        import sys as _sys
+        _sys.stderr.write(
+            f"[mnemos.ingest] Skipping {path}: {size} bytes exceeds "
+            f"{_MAX_READ_BYTES} byte limit. Register a custom extractor "
+            f"or chunk the file externally.\n"
+        )
+        return None
+    try:
+        return path.read_text(encoding="utf-8")  # strict
+    except UnicodeDecodeError:
+        # Explicit fallback with a warning so the lossy replacement is
+        # visible. Prior behavior silently mangled Latin-1/CP-1252 files.
+        import sys as _sys
+        _sys.stderr.write(
+            f"[mnemos.ingest] {path}: not valid UTF-8, falling back to "
+            f"replacement (some characters may be mangled). Consider "
+            f"converting the file or registering a custom extractor.\n"
+        )
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return None
     except Exception:
         return None
 
