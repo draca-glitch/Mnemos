@@ -265,7 +265,7 @@ def send_msg(msg):
 
 
 def main():
-    sys.stderr.write("Mnemos MCP server v10.1 starting (CPU-only, no GPU required)\n")
+    sys.stderr.write("Mnemos MCP server v10.2 starting (CPU-only, no GPU required)\n")
     sys.stderr.flush()
 
     mnemos = build_mnemos()
