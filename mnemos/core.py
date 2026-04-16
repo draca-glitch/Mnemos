@@ -409,8 +409,11 @@ class Mnemos:
                 ]
                 response = chat(msgs, max_tokens=16, temperature=0.0)
                 if response:
-                    word = response.strip().lower().split()[0].strip(".,:;!?")
-                    if word in self._CONTRADICTION_CLASSES:
+                    # Be defensive about whitespace-only or punctuation-only
+                    # responses: .split()[0] would IndexError on "" / "\n".
+                    words = response.strip().lower().split()
+                    word = words[0].strip(".,:;!?") if words else ""
+                    if word and word in self._CONTRADICTION_CLASSES:
                         return word
             except Exception:
                 pass
@@ -768,7 +771,9 @@ class Mnemos:
         Falls back to head slice when no sentence scores above zero
         (e.g., query terms are semantically present but lexically absent).
         """
-        if not content:
+        if not content or not content.strip():
+            # Defensive: whitespace-only content would produce "" + " …"
+            # fragment, which is cosmetic junk. Early return is honest.
             return ""
         # Extract substantive query words (lowercased, stopwords dropped,
         # length >= 3 to skip short tokens that add noise).
@@ -869,8 +874,12 @@ class Mnemos:
             where += " AND project = ?"
             params.append(project)
         if tags:
-            where += " AND tags LIKE ?"
-            params.append(f"%{tags}%")
+            # Word-boundary tag match: wrap both the stored tags CSV and the
+            # search pattern with commas so the LIKE query only matches the
+            # intended tag atom. Previous `LIKE '%foo%'` matched tags like
+            # 'unnamed' when user asked for 'name' — substring leak.
+            where += " AND (',' || tags || ',') LIKE ?"
+            params.append(f"%,{tags},%")
 
         if use_regex:
             rows = conn.execute(

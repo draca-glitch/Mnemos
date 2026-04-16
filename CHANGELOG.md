@@ -20,6 +20,48 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.9] - 2026-04-16 (bug audit fixes)
+
+Three real bugs from a post-ship audit of v10.1.0–v10.3.8. None of them
+were blocking production, but all three were real and would have bitten
+eventually.
+
+### Fixed
+
+- **`bulk_rewrite(tags='foo')` no longer leaks across tag boundaries.**
+  Previous `tags LIKE '%foo%'` matched memories with tags like
+  `unnamed,other` when the caller asked for `name`. Now uses
+  `(',' || tags || ',') LIKE '%,foo,%'` for word-boundary match.
+  Could have silently rewritten the wrong memories in production if
+  a user used the tags filter with a common substring. Highest-severity
+  of the three.
+
+- **`_vec_fallback_snippet` returns `""` on empty/whitespace content**
+  instead of the cosmetic fragment `" …"`. Triggered when a memory
+  with whitespace-only content hit the vec-only snippet path.
+  Cosmetic, but now honest.
+
+- **LLM classification path handles whitespace-only responses.** The
+  parsing logic `response.strip().lower().split()[0]` would IndexError
+  on `""`, `"   "`, or `"\n"` responses. Caught by the outer try/except
+  so no user-visible crash, but silently degraded to rerank heuristic
+  without telling anyone. Now explicitly checks for empty token list
+  and empty word, falling through cleanly when the LLM returns garbage.
+
+### Not changed (false positives from the audit)
+
+Two items flagged by the audit were not actual bugs:
+- Multi-hop BFS was accused of exceeding the depth cap. Traced:
+  `if dist >= linked_depth: continue` fires before expansion, so
+  grandchildren at max depth are collected (correct — depth is
+  inclusive) but great-grandchildren are never added. Invariant holds.
+- "Malformed LLM classification bypasses validation" — same code path
+  as the LLM empty-response bug; the existing
+  `if word in self._CONTRADICTION_CLASSES:` check catches `"---"` and
+  similar. Folded into the LLM fix above.
+
+---
+
 ## [10.3.8] - 2026-04-16 (SQL-based tag aggregation for scale)
 
 ### Changed
