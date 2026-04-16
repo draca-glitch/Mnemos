@@ -20,6 +20,47 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.2] - 2026-04-16 (fix: contradiction detection honors MNEMOS_ENABLE_RERANK=0)
+
+### Fixed
+
+- **Contradiction detection now honors the reranker opt-out.** In v10.3.0,
+  the three-tier pipeline would call `rerank()` directly in Tier 2
+  regardless of `Mnemos.enable_rerank` / `MNEMOS_ENABLE_RERANK=0`.
+  Consequences depending on environment:
+  - On a machine where the Jina model still loaded successfully, the
+    opt-out was silently negated — the ~500 MB the user was trying to
+    save got loaded anyway during the first contradiction check.
+  - On truly constrained machines where the model import failed, the
+    rerank call raised, was caught, and `_detect_contradictions`
+    returned `[]` — dropping ALL contradictions silently.
+
+  Fix: when `mode=rerank` and `self.enable_rerank` is False, degrade
+  gracefully to the `mode=vec` path (all vec-gated candidates → flagged
+  as contradicts, same as pre-v10.3 behavior, with warnings). Users who
+  opted out of rerank keep getting contradiction detection; they just
+  lose the `relates` silent-link refinement that required the rerank
+  scorer. That tradeoff is honest: you can't distinguish "same topic
+  complementary" from "same topic conflicting" without either a
+  cross-encoder or an LLM.
+
+- **LLM mode without rerank** now also works. Tier 2 is skipped, every
+  vec-gated candidate goes straight to LLM classification at Tier 3.
+  More expensive per-pair (no topical prefilter to drop unrelated
+  candidates) but functional. Users running `MNEMOS_CONTRADICT_MODE=llm`
+  with rerank disabled accept that cost explicitly.
+
+### Matrix (post-fix)
+
+| mode   | rerank enabled | rerank disabled |
+|--------|----------------|-----------------|
+| off    | no detection   | no detection    |
+| vec    | vec→contradicts| vec→contradicts |
+| rerank | three-tier     | degrade to vec  |
+| llm    | three-tier+LLM | skip Tier 2, LLM on all vec-gated |
+
+---
+
 ## [10.3.1] - 2026-04-16 (stop-hook session summary + decay audit)
 
 ### Added
