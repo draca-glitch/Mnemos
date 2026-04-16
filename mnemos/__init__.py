@@ -11,7 +11,7 @@ Quick start:
     results = m.search("vector storage")
 """
 
-__version__ = "10.3.5"
+__version__ = "10.3.6"
 
 from .core import Mnemos
 from .storage.base import MnemosStore, Memory

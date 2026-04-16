@@ -135,7 +135,8 @@ TOOL_DEFINITIONS = [
                 "limit": {"type": "integer", "default": 20, "maximum": 50},
                 "expand_merged": {"type": "boolean", "default": False, "description": "Tier-2 recall: enrich consolidated memories with their source originals (filtered to currently valid ones)"},
                 "snippet_chars": {"type": "integer", "minimum": 50, "maximum": 2000, "description": "If set, replace result content with a query-matched window of ~this many characters (FTS5 snippet for FTS hits, head slice for vec-only hits). Major token-budget saver when hits are inside large consolidated memories."},
-                "include_linked": {"type": "boolean", "default": False, "description": "Fold first-hop linked memories into each result as summaries. Saves round-trips when tracing relationships."},
+                "include_linked": {"type": "boolean", "default": False, "description": "Fold linked memories into each result as summaries. BFS traversal up to linked_depth hops. Saves round-trips when tracing relationships."},
+                "linked_depth": {"type": "integer", "default": 1, "minimum": 1, "maximum": 3, "description": "When include_linked=true, how many hops to traverse. 1 = direct links only (default). 2-3 = transitive links; capped at 30 total linked nodes per result to prevent graph explosion. Each linked entry carries `distance` (hops from root) and optional `via` for depth>1 transitive links."},
             },
             "required": ["query"],
         },
@@ -242,6 +243,7 @@ def tool_search(mnemos, params):
         expand_merged=params.get("expand_merged", False),
         snippet_chars=params.get("snippet_chars"),
         include_linked=params.get("include_linked", False),
+        linked_depth=params.get("linked_depth", 1),
     )
 
 
@@ -330,7 +332,7 @@ def main():
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "mnemos", "version": "10.3.5"},
+                    "serverInfo": {"name": "mnemos", "version": "10.3.6"},
                 },
             })
             # Warm up the embedder so first search is instant

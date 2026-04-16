@@ -559,35 +559,82 @@ class Mnemos:
                 # else: content is already short enough, no modification
                 # — `snippet` flag is not set
 
-        # Linked memory expansion: fold first-hop linked memories as summaries
-        # into each result. Saves round-trips for callers that want to see
-        # the relationship graph without a follow-up memory_get per link.
+        # Linked memory expansion: fold linked memories as summaries into
+        # each result. BFS traversal up to `linked_depth` hops, with cycle
+        # detection (visited set) and a total-nodes cap to prevent graph
+        # explosion. Each summary carries `distance` = hops from the
+        # originating result so callers can tell immediate links apart
+        # from transitive ones.
         if include_linked and link_map:
-            # Collect unique linked IDs across all results (depth=1 only for now)
-            linked_ids = set()
+            # Cap total linked nodes surfaced per result to keep response
+            # sizes bounded. Graph blowup at depth=3 in a well-linked
+            # store can easily reach hundreds; this cap keeps responses
+            # usable while preserving the spirit of "see the graph."
+            MAX_LINKED_PER_RESULT = 30
+            already_in_results = {r["id"] for r in results}
+
             for r in results:
-                for link in link_map.get(r["id"], []):
-                    linked_ids.add(link["linked_id"])
-            # Don't refetch memories that are already in the result set
-            already = {r["id"] for r in results}
-            to_fetch = list(linked_ids - already)
-            fetched = self.store.get_memories_by_ids(to_fetch) if to_fetch else {}
-            for r in results:
-                linked_summaries = []
-                for link in link_map.get(r["id"], []):
-                    lid = link["linked_id"]
-                    m = fetched.get(lid) or memories.get(lid)
-                    if not m:
+                visited = {r["id"]}
+                frontier = [(r["id"], 0)]  # (node_id, distance-from-root)
+                collected = []  # [{id, project, relation, strength, distance, content}]
+                local_link_cache = dict(link_map)  # will expand as we BFS
+
+                while frontier and len(collected) < MAX_LINKED_PER_RESULT:
+                    node_id, dist = frontier.pop(0)
+                    if dist >= linked_depth:
                         continue
-                    linked_summaries.append({
-                        "id": lid,
-                        "project": m.project,
-                        "relation": link["relation"],
-                        "strength": link["strength"],
-                        "content": (m.content or "")[:200],
-                    })
-                if linked_summaries:
-                    r["linked_memories"] = linked_summaries
+                    # For nodes beyond the initial result set, we haven't
+                    # fetched their links yet — fetch lazily on first visit
+                    if node_id not in local_link_cache:
+                        try:
+                            newlinks = self.store.get_links([node_id])
+                            local_link_cache.update(newlinks)
+                        except Exception:
+                            local_link_cache[node_id] = []
+                    for link in local_link_cache.get(node_id, []):
+                        lid = link["linked_id"]
+                        if lid in visited:
+                            continue
+                        visited.add(lid)
+                        # Skip linking to something already in the top-level
+                        # result set — callers already have it, don't double
+                        if lid in already_in_results:
+                            continue
+                        collected.append({
+                            "id": lid,
+                            "relation": link["relation"],
+                            "strength": link["strength"],
+                            "distance": dist + 1,  # hops from root
+                            "_via": node_id,       # which node reached it
+                        })
+                        frontier.append((lid, dist + 1))
+                        if len(collected) >= MAX_LINKED_PER_RESULT:
+                            break
+
+                # Bulk-fetch all collected memory bodies in one query
+                if collected:
+                    linked_ids = [c["id"] for c in collected]
+                    fetched = self.store.get_memories_by_ids(linked_ids)
+                    summaries = []
+                    for c in collected:
+                        mem = fetched.get(c["id"]) or memories.get(c["id"])
+                        if not mem:
+                            continue
+                        summary = {
+                            "id": c["id"],
+                            "project": mem.project,
+                            "relation": c["relation"],
+                            "strength": c["strength"],
+                            "distance": c["distance"],
+                            "content": (mem.content or "")[:200],
+                        }
+                        # Only include `via` for depth > 1 to avoid clutter
+                        # on the common depth=1 path
+                        if c["distance"] > 1:
+                            summary["via"] = c["_via"]
+                        summaries.append(summary)
+                    if summaries:
+                        r["linked_memories"] = summaries
 
         # Tier-2 recall: expand consolidated memories to their source originals
         if expand_merged:

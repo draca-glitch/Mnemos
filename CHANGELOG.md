@@ -20,6 +20,50 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.6] - 2026-04-16 (multi-hop `include_linked` with cycle detection)
+
+### Changed
+
+- **`memory_search(include_linked=true, linked_depth=N)`** now does real
+  BFS graph traversal up to N hops (default 1, max 3 via MCP tool). Each
+  linked memory summary carries a `distance` field (hops from the root
+  result) and, for depth>1, a `via` field naming the intermediate node
+  that reached it. Cycle detection via visited set prevents infinite
+  loops on circular link graphs. Per-result cap of 30 total linked nodes
+  to keep response sizes bounded even on well-linked graphs.
+
+### Why this matters
+
+v10.1.0 documented `linked_depth=1` as the only supported depth. For
+single-hop relationship inspection that's fine, but graph-aware callers
+(e.g., "show me this memory and anything transitively connected within
+3 hops") had to do BFS client-side via repeated `memory_get` calls.
+Now it's one parameter on `memory_search`.
+
+### Response shape
+
+Each entry in `linked_memories`:
+```json
+{
+  "id": 42,
+  "project": "dev",
+  "relation": "relates",
+  "strength": 0.7,
+  "distance": 2,       // hops from root
+  "via": 17,           // present when distance > 1; the intermediate node
+  "content": "..."     // first 200 chars
+}
+```
+
+### Limits
+
+- Max 3 hops via MCP (parameter constraint); library API accepts any int
+- 30-node cap per result prevents exponential blowup
+- Nodes already in the top-level result set are not included as "linked"
+  (callers already have them)
+
+---
+
 ## [10.3.5] - 2026-04-16 (`mnemos doctor --migrate` + column backfill extended)
 
 ### Added
