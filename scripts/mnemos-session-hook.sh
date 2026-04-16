@@ -87,9 +87,11 @@ case "${1:-start}" in
             exit 0
         fi
 
-        # Once-per-session guard
+        # Once-per-session guard — atomic mkdir is race-free (touch+test
+        # is vulnerable to TOCTOU if two invocations share a session id).
+        # mkdir returns 0 only for the winner; losers get non-zero and exit.
         MARKER="$STATE_DIR/${SID}.primed"
-        if [ -f "$MARKER" ]; then
+        if ! mkdir "$MARKER" 2>/dev/null; then
             exit 0
         fi
 
@@ -97,7 +99,6 @@ case "${1:-start}" in
         PROMPT_TEXT="${PROMPT_TEXT:0:500}"
 
         "$MNEMOS_BIN" prime "$PROMPT_TEXT" --limit 5 2>/dev/null || true
-        touch "$MARKER"
         ;;
 
     stop)
