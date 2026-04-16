@@ -451,6 +451,13 @@ class Mnemos:
                search_mode=None, limit=20, auto_widen=True,
                expand_merged=False, snippet_chars=None,
                include_linked=False, linked_depth=1) -> dict:
+        # Clamp linked_depth at entry: negative values would make the
+        # BFS guard `if dist >= linked_depth` trivially true after the
+        # root, silently disabling all link expansion. The MCP tool
+        # schema caps at 1..3 but direct Python callers can pass any
+        # int. Same defensive posture as snippet_chars / limit.
+        if include_linked:
+            linked_depth = max(1, min(int(linked_depth or 1), 3))
         """Hybrid retrieval: FTS5 + vector search + RRF merge + optional rerank.
 
         When `expand_merged=True`, results that were created by the Nyx
