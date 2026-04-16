@@ -81,6 +81,14 @@ class Mnemos:
         """Store a new memory with full pipeline: dedup → embed → store → contradiction check."""
         if not project or not content:
             return {"error": "project and content are required"}
+        # Strip NUL bytes from content and tags. SQLite tolerates them fine
+        # but downstream consumers (jq, shell scripts, some strict JSON
+        # parsers) truncate or reject at NUL. Silent data loss in recipients
+        # is worse than a noisy mutation here.
+        if content and "\x00" in content:
+            content = content.replace("\x00", "")
+        if tags and "\x00" in tags:
+            tags = tags.replace("\x00", "")
         if mem_type not in VALID_TYPES:
             mem_type = "fact"
         if layer not in VALID_LAYERS:
