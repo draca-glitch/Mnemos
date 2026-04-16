@@ -796,6 +796,18 @@ def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge, execute=Fa
             log(f"    → SUPERSEDED: #{older_id} archived, linked to #{newer_id}")
 
         elif classification == "EVOLVED":
+            # Mark the older memory's valid_until so `valid_only=True`
+            # searches exclude it — the newer memory supersedes it
+            # temporally. Without this, both stay active and ranking
+            # treats them as equally current. Use today's date as a
+            # best-effort approximation; the LLM classification was
+            # based on the temporal argument in their texts.
+            conn.execute(
+                "UPDATE memories SET valid_until = date('now','localtime'), "
+                "updated_at = datetime('now','localtime') "
+                "WHERE id = ? AND (valid_until IS NULL OR valid_until > date('now','localtime'))",
+                (older_id,),
+            )
             conn.execute(
                 "INSERT OR IGNORE INTO memory_links "
                 "(source_id, target_id, relation_type, strength) "
