@@ -775,6 +775,10 @@ class Mnemos:
             # Defensive: whitespace-only content would produce "" + " …"
             # fragment, which is cosmetic junk. Early return is honest.
             return ""
+        if chars <= 0:
+            # Negative / zero budgets: return empty rather than Python's
+            # content[:negative] semantics that truncate from the end.
+            return ""
         # Extract substantive query words (lowercased, stopwords dropped,
         # length >= 3 to skip short tokens that add noise).
         import re
