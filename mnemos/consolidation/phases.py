@@ -366,43 +366,59 @@ def apply_merge(conn, cluster_ids, merged_content, mem_by_id):
                        if mem_by_id[mid].get("last_confirmed")]
     inherit_confirmed = max(confirmed_dates) if confirmed_dates else None
 
-    conn.execute(
-        "INSERT INTO memories (project, content, tags, importance, type, verified, "
-        "consolidation_lock, layer, last_confirmed) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'semantic', ?)",
-        (project, merged_content, ",".join(sorted(all_tags)), max_importance,
-         inherit_type, inherit_verified, inherit_lock, inherit_confirmed),
-    )
-    new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-
-    for mid in cluster_ids:
-        conn.execute(
-            "UPDATE memories SET status = 'archived', "
-            "updated_at = datetime('now', 'localtime'), "
-            "tags = tags || ',merged-into-' || ? "
-            "WHERE id = ?",
-            (str(new_id), mid),
-        )
-
-    conn.commit()
-
-    # Embed the merged memory. layer="semantic" matches the INSERT above and
-    # keeps the prep_memory_text arg set consistent with the stored metadata.
+    # Atomic merge: INSERT new memory + UPDATE archive sources + INSERT
+    # embedding all go in one transaction. If embedding fails we ROLLBACK
+    # the whole thing so the DB never contains an unembeddable merged
+    # memory without its sources — previously we committed the merge
+    # first, then tried to embed, and a failure there left orphans that
+    # only `doctor --migrate` could later notice. One-transaction keeps
+    # the invariant that every active memory has an embedding in the
+    # same write window.
     try:
+        conn.execute("BEGIN")
+        conn.execute(
+            "INSERT INTO memories (project, content, tags, importance, type, verified, "
+            "consolidation_lock, layer, last_confirmed) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'semantic', ?)",
+            (project, merged_content, ",".join(sorted(all_tags)), max_importance,
+             inherit_type, inherit_verified, inherit_lock, inherit_confirmed),
+        )
+        new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+        for mid in cluster_ids:
+            conn.execute(
+                "UPDATE memories SET status = 'archived', "
+                "updated_at = datetime('now', 'localtime'), "
+                "tags = tags || ',merged-into-' || ? "
+                "WHERE id = ?",
+                (str(new_id), mid),
+            )
+
+        # Embed inside the same transaction. layer="semantic" matches the
+        # INSERT above and keeps prep_memory_text consistent with stored
+        # metadata. If fastembed_embed fails (network, OOM, etc.) the
+        # exception bubbles out and the outer except ROLLBACKs.
         text = prep_memory_text(project, merged_content,
                                 ",".join(sorted(all_tags)),
                                 mem_type=inherit_type, layer="semantic")
         emb = fastembed_embed([text])
-        if emb and emb[0]:
-            thash = text_hash(text)
-            store_embeddings(conn, [(
-                "memory", new_id, thash, emb[0]
-            )], model=FASTEMBED_MODEL)
-            conn.commit()
-    except Exception as e:
-        log(f"Warning: embedding failed for merged #{new_id}: {e}")
+        if not (emb and emb[0]):
+            raise RuntimeError("fastembed returned empty embedding")
+        thash = text_hash(text)
+        store_embeddings(conn, [(
+            "memory", new_id, thash, emb[0]
+        )], model=FASTEMBED_MODEL)
 
-    return new_id
+        conn.commit()
+        return new_id
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        log(f"Warning: merge aborted for cluster {cluster_ids}: {e}. "
+            f"No changes committed (transaction rolled back).")
+        return None
 
 
 # =============================================================================
@@ -458,13 +474,16 @@ def phase_dedup(conn, mergeable_embeddings, mem_by_id, is_surge, execute=False):
                 merged = merge_cluster(cluster, mem_by_id)
                 if merged:
                     new_id = apply_merge(conn, cluster, merged, mem_by_id)
-                    log(f"  Merged → #{new_id}, archived {cluster}")
-                    stats["tight_merged"] += 1
-                    stats["archived"] += len(cluster)
-                    stats["created"] += 1
-                    # Remove merged IDs from embeddings for tier 1B
-                    for mid in cluster:
-                        mergeable_embeddings.pop(mid, None)
+                    if new_id is not None:
+                        log(f"  Merged → #{new_id}, archived {cluster}")
+                        stats["tight_merged"] += 1
+                        stats["archived"] += len(cluster)
+                        stats["created"] += 1
+                        # Remove merged IDs from embeddings for tier 1B
+                        for mid in cluster:
+                            mergeable_embeddings.pop(mid, None)
+                    else:
+                        stats["merge_aborted"] = stats.get("merge_aborted", 0) + 1
                 time.sleep(0.5)
 
     # Tier 1B: Topic merge (looser threshold)
@@ -484,10 +503,13 @@ def phase_dedup(conn, mergeable_embeddings, mem_by_id, is_surge, execute=False):
                     merged = merge_cluster(cluster, mem_by_id)
                     if merged:
                         new_id = apply_merge(conn, cluster, merged, mem_by_id)
-                        log(f"  Merged → #{new_id}, archived {cluster}")
-                        stats["topic_merged"] += 1
-                        stats["archived"] += len(cluster)
-                        stats["created"] += 1
+                        if new_id is not None:
+                            log(f"  Merged → #{new_id}, archived {cluster}")
+                            stats["topic_merged"] += 1
+                            stats["archived"] += len(cluster)
+                            stats["created"] += 1
+                        else:
+                            stats["merge_aborted"] = stats.get("merge_aborted", 0) + 1
                     time.sleep(0.5)
 
     log(f"Phase 2 done: {stats['tight_found']}+{stats['topic_found']} clusters found, "
