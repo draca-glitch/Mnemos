@@ -20,6 +20,48 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.10] - 2026-04-16 (second-pass audit fixes)
+
+Four more real bugs from a deeper second audit pass. All low severity
+but all reproducible with concrete triggers.
+
+### Fixed
+
+- **`_vec_fallback_snippet` now guards against non-positive `chars`.**
+  Python's `content[:negative]` truncates from the end of the string
+  rather than returning empty, producing nonsense output when the
+  snippet budget is 0 or negative. The MCP tool schema caps
+  `snippet_chars` at 50..2000 but direct Python callers can pass any
+  int. Explicit early return at function entry.
+
+- **Atomic marker file for once-per-session UserPromptSubmit guard**
+  (`scripts/mnemos-session-hook.sh`, also mirrored in the Epsilon
+  reference hook). Previous test-then-touch pattern had a TOCTOU
+  window: two concurrent invocations sharing a `CLAUDE_SESSION_ID`
+  could both observe "marker absent" and both run priming. `mkdir`
+  succeeds for exactly one caller even under race.
+
+- **NUL bytes stripped from content and tags on store.** SQLite tolerates
+  them fine, but downstream consumers (jq in shell hooks, strict JSON
+  parsers, some display layers) truncate or reject at NUL. Silent
+  data loss in recipients is the real risk. Strip on `store_memory()`
+  entry so the value reaching SQLite is NUL-free.
+
+- **`linked_depth` clamped to [1, 3] at `search()` entry.** Negative or
+  zero `linked_depth` made the BFS guard `if dist >= linked_depth`
+  trivially true after the root, silently disabling all link expansion.
+  MCP tool schema caps at 1..3; Python callers now get the same
+  protection.
+
+### Not fixed (audit false positives, documented for future-me)
+
+- `bulk_rewrite` with `max_affected=1` and all-no-op replacements
+  reports `affected=0` — technically correct, semantics are clear.
+- `doctor(migrate=True)` with backup failure — correctly aborts and
+  reports the error. No silent data loss.
+
+---
+
 ## [10.3.9] - 2026-04-16 (bug audit fixes)
 
 Three real bugs from a post-ship audit of v10.1.0–v10.3.8. None of them
