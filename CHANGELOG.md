@@ -20,6 +20,39 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.3] - 2026-04-16 (revert graceful degrade; state rerank as required)
+
+### Changed
+
+- **Removed the defensive rerank-off graceful degrade added in v10.3.2.**
+  The cross-encoder is canonical — Mnemos's benchmark numbers and the
+  `relates` silent-link refinement both require it. Pretending otherwise
+  with graceful degradation paths added code without adding honesty.
+  The honest API is:
+  - `mode=vec` → explicit Tier-1-only, works without rerank
+  - `mode=rerank` → requires `MNEMOS_ENABLE_RERANK=1`; if disabled,
+    rerank() throws/returns empty and `_detect_contradictions` returns
+    `[]` (user's choice to cripple the pipeline)
+  - `mode=llm` → requires both rerank AND `MNEMOS_LLM_*` env vars
+
+  If you've explicitly opted out of rerank, pick `mode=vec`. Don't ask
+  Mnemos to fake a behavior it's not designed to deliver.
+
+- **Docs in `constants.py` now state rerank-requirement explicitly** for
+  the `rerank` and `llm` modes rather than implying they gracefully
+  degrade. Terse and accurate: you get what you configure.
+
+### Rationale
+
+v10.3.2 tried to make "user disabled rerank but asked for rerank mode"
+still produce warnings by falling back to vec-mode behavior. That
+conflated opt-outs with misconfiguration. The right contract is: the
+feature requires the component, the user either configures it or picks
+a different mode. Defensive reinterpretation hides bugs; clear errors
+surface them.
+
+---
+
 ## [10.3.2] - 2026-04-16 (fix: contradiction detection honors MNEMOS_ENABLE_RERANK=0)
 
 ### Fixed

@@ -318,12 +318,14 @@ class Mnemos:
             return []
 
         # Tier 1-only mode: treat every vec-gated candidate as contradicts.
-        # Preserved for users who explicitly opt out of rerank/llm costs.
-        # Also the graceful degrade path when rerank mode is requested but
-        # the reranker is disabled (MNEMOS_ENABLE_RERANK=0) — we honor the
-        # memory/CPU opt-out rather than silently loading the 500 MB model
-        # or silently dropping all contradictions.
-        if mode == "vec" or (mode == "rerank" and not self.enable_rerank):
+        # This is the honest path for users who explicitly opt out of
+        # rerank: pick mode=vec. The `rerank` and `llm` modes require
+        # the cross-encoder by design — it's the component that makes
+        # the `relates` silent-link refinement possible. If a caller
+        # sets mode=rerank with MNEMOS_ENABLE_RERANK=0 we let rerank()
+        # fail (it will throw or return empty), and `_detect_contradictions`
+        # returns []. That's their choice to cripple the pipeline.
+        if mode == "vec":
             warnings = []
             for mid, mem in memories.items():
                 self.store.store_link(new_id, mid, "contradicts", 0.5)
@@ -332,9 +334,13 @@ class Mnemos:
                 ))
             return warnings
 
-        # LLM mode availability check. Mode 'llm' with no rerank loaded
-        # means we skip Tier 2 and go straight to LLM on all vec-gated
-        # candidates (expensive per-pair but feasible for opt-in users).
+        # Tier 2: cross-encoder rerank (canonical for modes rerank and llm)
+        try:
+            docs = [{"text": m.content, "id": mid} for mid, m in memories.items()]
+            ranked = rerank(content, docs)
+        except Exception:
+            return []
+
         llm_available = False
         if mode == "llm":
             try:
@@ -342,20 +348,6 @@ class Mnemos:
                 llm_available = _llm_ok()
             except Exception:
                 llm_available = False
-
-        # Tier 2: cross-encoder rerank (skipped in LLM mode when reranker
-        # is disabled, since LLM can classify without the topical prefilter)
-        if not self.enable_rerank and mode == "llm":
-            # Synthesize a neutral ranked list so the downstream loop works:
-            # every vec-gated candidate gets score 0.5 (treated as "moderate"
-            # which triggers LLM classification at Tier 3).
-            ranked = [{"id": mid, "_rerank_score": 0.0} for mid in memories]
-        else:
-            try:
-                docs = [{"text": m.content, "id": mid} for mid, m in memories.items()]
-                ranked = rerank(content, docs)
-            except Exception:
-                return []
 
         warnings = []
         for hit in ranked:

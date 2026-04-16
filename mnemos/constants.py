@@ -62,12 +62,18 @@ CONTRADICTION_RERANK_THRESHOLD = CONTRADICTION_RERANK_MIN
 # --- Contradiction detection mode ---
 # Three-tier classification behaviour:
 #   off    — disable contradiction detection entirely
-#   vec    — Tier 1 only (vec gate, no rerank); all vec-gated pairs → contradicts
+#   vec    — Tier 1 only (vec gate, no rerank); all vec-gated pairs → contradicts.
+#            This is the honest opt-out path for users who have disabled the
+#            reranker (MNEMOS_ENABLE_RERANK=0).
 #   rerank — Tier 1 + Tier 2 (default, recommended): vec + rerank with HIGH
-#            threshold distinguishing `contradicts` from `relates`
+#            threshold distinguishing `contradicts` from `relates`. REQUIRES
+#            the cross-encoder: the `relates` silent-link refinement is what
+#            rerank buys you. If you disable rerank, use mode=vec instead —
+#            mode=rerank will silently return no contradictions.
 #   llm    — Tier 1 + Tier 2 + Tier 3 LLM classification: moderate-score pairs
 #            are classified by LLM into {contradicts, refines, evolves,
-#            relates, unrelated}. Requires MNEMOS_LLM_* env vars configured.
+#            relates, unrelated}. REQUIRES both the cross-encoder AND
+#            MNEMOS_LLM_* env vars configured.
 DEFAULT_CONTRADICT_MODE = os.environ.get(
     "MNEMOS_CONTRADICT_MODE", "rerank"
 ).lower()
