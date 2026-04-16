@@ -25,7 +25,7 @@ from .constants import (
     HYBRID_MIN_MEMORIES, IMPORTANCE_THRESHOLDS, VEC_DEDUP_MAX_DISTANCE,
     DEDUP_RERANK_THRESHOLD, CONTRADICTION_VEC_THRESHOLD,
     CONTRADICTION_RERANK_THRESHOLD, DEFAULT_NAMESPACE,
-    DEFAULT_ENABLE_RERANK,
+    DEFAULT_ENABLE_RERANK, DEFAULT_RETRIEVAL_LOG,
     VALID_TYPES, VALID_LAYERS, CML_MODE,
 )
 
@@ -62,11 +62,13 @@ class Mnemos:
         namespace: str = DEFAULT_NAMESPACE,
         enable_rerank: bool = DEFAULT_ENABLE_RERANK,
         enable_contradiction_detection: bool = True,
+        enable_retrieval_log: bool = DEFAULT_RETRIEVAL_LOG,
     ):
         self.store = store or SQLiteStore(namespace=namespace)
         self.namespace = namespace
         self.enable_rerank = enable_rerank
         self.enable_contradiction_detection = enable_contradiction_detection
+        self.enable_retrieval_log = enable_retrieval_log
 
     # --- Store ---
 
@@ -477,6 +479,19 @@ class Mnemos:
                     sources = []
                 if sources:
                     r["merged_from"] = [s.to_dict() for s in sources]
+
+        # Opt-in retrieval logging: best-effort side channel, never affects
+        # the returned result. Logs (query, memory_id) per returned hit so
+        # callers can later mine real-query distribution for benchmarks,
+        # quality analysis, and autoimprove cycles.
+        if self.enable_retrieval_log and results:
+            try:
+                self.store.log_retrieval(
+                    query=query,
+                    memory_ids=[r["id"] for r in results if "id" in r],
+                )
+            except Exception:
+                pass
 
         response = {
             "count": len(results),

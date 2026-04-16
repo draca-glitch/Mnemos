@@ -210,3 +210,19 @@ class MnemosStore(ABC):
         Format: {memory_id: snippet_string}.
         """
         return {}
+
+    # --- Retrieval logging (opt-in, used when MNEMOS_RETRIEVAL_LOG=1) ---
+
+    def log_retrieval(
+        self,
+        query: str,
+        memory_ids: list,
+        session_id: Optional[str] = None,
+    ) -> None:
+        """Persist a search event: the query and the memory IDs it returned.
+
+        Default implementation is a no-op. Backends that want retrieval-log
+        semantics (SQLite-based stores) override with an INSERT. Callers
+        pass `session_id=None` to omit; future analytics may group by it.
+        """
+        return None

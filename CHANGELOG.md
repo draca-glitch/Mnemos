@@ -20,6 +20,54 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.2.0] - 2026-04-16 (opt-in retrieval logging for real-query analytics)
+
+### Added
+
+- **`retrieval_log` table + opt-in write path**. When `MNEMOS_RETRIEVAL_LOG=1`
+  (or passing `enable_retrieval_log=True` to `Mnemos(...)`) every successful
+  `memory_search` call persists one row per returned memory: the query
+  text, the memory_id, a timestamp, and an optional session_id. Default
+  off for privacy (queries often contain sensitive content, users must
+  opt in consciously).
+
+  Why: real retrieval traces are the right input for benchmark generation,
+  retrieval quality analysis, and autoimprove cycles that tune search
+  parameters against actual query distribution rather than synthetic
+  golden sets. Without this, teams running Mnemos in production have no
+  way to measure "are we serving the right memories?" after the fact.
+
+  Schema (compatible with existing Epsilon-style deployments):
+  ```sql
+  retrieval_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id INTEGER NOT NULL,
+    query TEXT NOT NULL,
+    retrieved_at TEXT DEFAULT (datetime('now', 'localtime')),
+    useful INTEGER DEFAULT NULL,
+    session_id TEXT DEFAULT NULL
+  )
+  ```
+
+  Backend API: `MnemosStore.log_retrieval(query, memory_ids, session_id=None)`.
+  Default implementation is a no-op; SQLiteStore overrides with a batched
+  INSERT. Qdrant and Postgres backends can override if retrieval analytics
+  are desired there too.
+
+  Failure semantics: logging is best-effort side channel. Any exception
+  during log write is swallowed; search results are returned regardless.
+  Callers can rely on search correctness independent of log success.
+
+### Not yet implemented (planned for follow-up)
+
+- `consolidation_log` table for Nyx run audit trail (when/what ran, phase
+  outcomes, errors). Queued as the natural companion to retrieval_log.
+- `useful` flag write path: schema allows a later UPDATE to mark a logged
+  retrieval as helpful/unhelpful, enabling supervised quality signals.
+  No MCP tool yet to emit that flag — the column is reserved.
+
+---
+
 ## [10.1.2] - 2026-04-16 (session-hook ergonomics: briefing truncation + CWD priming)
 
 Two small but daily-visible improvements to the session-hook pipeline that

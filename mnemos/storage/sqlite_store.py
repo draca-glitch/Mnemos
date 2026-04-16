@@ -194,6 +194,21 @@ class SQLiteStore(MnemosStore):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_nyx_memory ON nyx_insights(memory_id)")
+        # Retrieval log (opt-in; populated when MNEMOS_RETRIEVAL_LOG=1). Schema
+        # matches the Epsilon custom-server layout so the same table serves
+        # both deployments if a DB is shared during migration.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS retrieval_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL,
+                query TEXT NOT NULL,
+                retrieved_at TEXT DEFAULT (datetime('now', 'localtime')),
+                useful INTEGER DEFAULT NULL,
+                session_id TEXT DEFAULT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_memory ON retrieval_log(memory_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_useful ON retrieval_log(useful)")
         conn.commit()
 
     # --- CRUD ---
@@ -578,6 +593,29 @@ class SQLiteStore(MnemosStore):
             "by_project": by_project,
             "namespace": ns,
         }
+
+    # --- Retrieval logging ---
+
+    def log_retrieval(self, query, memory_ids, session_id=None):
+        """Insert one row per returned memory for a search event.
+
+        Called from Mnemos.search() when MNEMOS_RETRIEVAL_LOG=1. Failures
+        are swallowed: logging is a best-effort side-channel, never a
+        hard dependency of search correctness. The caller's search result
+        is unaffected by logging outcomes.
+        """
+        if not query or not memory_ids:
+            return
+        try:
+            conn = self._get_conn()
+            conn.executemany(
+                "INSERT INTO retrieval_log (memory_id, query, session_id) "
+                "VALUES (?, ?, ?)",
+                [(mid, query, session_id) for mid in memory_ids],
+            )
+            conn.commit()
+        except Exception:
+            pass
 
     # --- Tag discovery ---
 

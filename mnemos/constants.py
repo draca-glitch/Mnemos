@@ -90,6 +90,16 @@ DEFAULT_ENABLE_RERANK = os.environ.get(
     "MNEMOS_ENABLE_RERANK", "1"
 ).lower() in ("1", "true", "yes", "on")
 
+# --- Retrieval logging (opt-in) ---
+# When enabled, every successful search records (query, returned memory IDs)
+# to a `retrieval_log` table. This feeds benchmark generation and retrieval
+# quality analysis over real queries. Default off for privacy: queries may
+# contain sensitive content, and users should opt in consciously.
+#   export MNEMOS_RETRIEVAL_LOG=1   # enable
+DEFAULT_RETRIEVAL_LOG = os.environ.get(
+    "MNEMOS_RETRIEVAL_LOG", "0"
+).lower() in ("1", "true", "yes", "on")
+
 # --- Storage paths ---
 DEFAULT_DB_PATH = os.environ.get(
     "MNEMOS_DB",
