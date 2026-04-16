@@ -323,7 +323,16 @@ def merge_cluster(cluster_ids, mem_by_id):
                 merged = re.sub(r"^```\w*\n?", "", merged)
                 merged = re.sub(r"\n?```$", "", merged).strip()
             else:
-                # Fall back to concatenation so nothing is lost silently
+                # LLM call failed (returned None/empty). Fall back to raw
+                # concatenation so nothing is lost — but LOG IT so debugging
+                # doesn't have to guess why a merged memory is suddenly
+                # twice the expected size. Previously this was silent; a
+                # persistent LLM outage would inflate merged memories
+                # without any operator signal.
+                log(f"  Warning: LLM merge call returned empty for L{level} "
+                    f"pair (sources={a['source_ids']} + {b['source_ids']}); "
+                    f"falling back to raw concatenation (content will be "
+                    f"~{len(a['content']) + len(b['content'])} chars)")
                 merged = a["content"] + "\n---\n" + b["content"]
             combined_sources = a["source_ids"] + b["source_ids"]
             next_level.append({
