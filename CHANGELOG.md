@@ -20,6 +20,86 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.0] - 2026-04-16 (three-tier contradiction detection with `relates` link)
+
+### Why this matters
+
+The v10.2.x contradiction detector scored topical similarity (via
+cross-encoder rerank) and flagged anything above 0.35 as "contradicts."
+The rerank answers "are these about the same topic?" not "do these say
+opposite things?", so complementary same-topic pairs got flagged as
+contradictions noisily. Over a long-running deployment this trains the
+user to ignore warnings, which defeats the purpose.
+
+v10.3.0 adds a `relates` link type for the middle zone. Moderate-score
+pairs get silently linked (no warning), while only high-score pairs or
+LLM-classified conflicts emit warnings. False-positive noise goes away;
+real contradictions still surface.
+
+### Added
+
+- **`relates` link type** (alongside existing `contradicts`, `reflects`,
+  `evolves`, `supersedes`, `enables`). No schema migration needed —
+  `memory_links.relation_type` is free-form text, this is a new sentinel
+  value.
+
+- **`MNEMOS_CONTRADICT_MODE` env var** with four values:
+  - `off` — disable contradiction detection entirely
+  - `vec` — Tier 1 only (vec gate, no rerank); all vec-gated candidates
+    → `contradicts`. Matches pre-v10.3 behavior for users who explicitly
+    want it.
+  - `rerank` (default) — Tier 1 + Tier 2. Vec gate + cross-encoder rerank
+    with two thresholds:
+    - `CONTRADICTION_RERANK_MIN` (0.35): below → skip, not even topical
+    - `CONTRADICTION_RERANK_HIGH` (0.60): above → `contradicts` + warn
+    - Between MIN and HIGH → `relates`, silent link, no warning
+  - `llm` — Tier 1 + Tier 2 + Tier 3 LLM classification. Each rerank
+    survivor is classified by LLM into one of {contradicts, refines,
+    evolves, relates, unrelated}. Requires MNEMOS_LLM_* env vars.
+
+- **Enriched warning shape**. Each warning now includes `classification`
+  (which of the 5 classes) and `suggested_action` (`link:contradicts`,
+  `link:refines`, `link:evolves`, `link:relates`, `no_action`). Silent
+  `relates` links are persisted but not surfaced to the caller.
+
+### Changed
+
+- **`CONTRADICTION_RERANK_THRESHOLD` constant renamed to
+  `CONTRADICTION_RERANK_MIN`**, with a backward-compat alias preserved
+  so v10.2.x imports keep working. New companion `CONTRADICTION_RERANK_HIGH`
+  introduces the silent-link zone.
+
+- **`contradiction_warning` string** now summarizes by classification:
+  `⚠ relationship flag(s) detected: 2 contradicts, 1 refines`. Previous
+  version just said `⚠ 3 potential contradiction(s) detected`, which
+  lumped noisy `relates`-type matches in with real conflicts.
+
+### Classification semantics (LLM mode)
+
+- **contradicts**: explicit conflict (A says X, B says not-X on same subject)
+- **refines**: B refines/expands/corrects A's fact (same subject, added detail, no conflict)
+- **evolves**: B is a temporally-later update of A (A was true then, B is true now)
+- **relates**: same topic but complementary, no conflict, no temporal order
+- **unrelated**: different topics despite surface similarity (no link stored)
+
+### Backward compatibility
+
+Existing `contradicts` links remain untouched. The default mode (`rerank`)
+produces a superset of the v10.2.x link graph plus new `relates` links
+for pairs that previously were either warned-about-noisily or silently
+dropped. Callers that inspect `contradictions` results should handle the
+new `classification` field (falls back to "contradicts" if absent for
+mode=vec pre-v10.3 compat).
+
+### Calibration
+
+The canonical false-positive case from v10.2.x (memories #2043 and #2045,
+both dominance self-insights, complementary not contradictory, sim=0.58)
+now classifies as `relates` under the default `rerank` mode: silent link
+persisted, no warning emitted.
+
+---
+
 ## [10.2.3] - 2026-04-16 (memory_bulk_rewrite: find-and-replace across memories)
 
 ### Added

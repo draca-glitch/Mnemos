@@ -24,8 +24,9 @@ from .query import fts_dedup
 from .constants import (
     HYBRID_MIN_MEMORIES, IMPORTANCE_THRESHOLDS, VEC_DEDUP_MAX_DISTANCE,
     DEDUP_RERANK_THRESHOLD, CONTRADICTION_VEC_THRESHOLD,
-    CONTRADICTION_RERANK_THRESHOLD, DEFAULT_NAMESPACE,
-    DEFAULT_ENABLE_RERANK, DEFAULT_RETRIEVAL_LOG,
+    CONTRADICTION_RERANK_MIN, CONTRADICTION_RERANK_HIGH,
+    DEFAULT_NAMESPACE, DEFAULT_ENABLE_RERANK, DEFAULT_RETRIEVAL_LOG,
+    DEFAULT_CONTRADICT_MODE,
     VALID_TYPES, VALID_LAYERS, CML_MODE,
 )
 
@@ -131,14 +132,24 @@ class Mnemos:
         if valid_until:
             result["valid_until"] = valid_until
 
-        # Contradiction detection
+        # Contradiction detection (Tier 1-3 pipeline, MNEMOS_CONTRADICT_MODE
+        # selects rerank|llm|vec|off; see _detect_contradictions). Only
+        # returns warnings for classifications that need caller attention:
+        # contradicts, refines, evolves. Silent `relates` links are
+        # persisted but not surfaced.
         if self.enable_contradiction_detection and cached_embedding:
             contradictions = self._detect_contradictions(mid, content, project, cached_embedding)
             if contradictions:
                 result["contradictions"] = contradictions
+                # Summarize by classification so callers can tell at a glance
+                # whether it's a real contradict vs a refines/evolves hint.
+                counts = {}
+                for c in contradictions:
+                    cls = c.get("classification", "contradicts")
+                    counts[cls] = counts.get(cls, 0) + 1
+                parts = ", ".join(f"{n} {cls}" for cls, n in counts.items())
                 result["contradiction_warning"] = (
-                    f"⚠ {len(contradictions)} potential contradiction(s) detected. "
-                    f"Review conflicting memories."
+                    f"⚠ relationship flag(s) detected: {parts}. Review conflicting memories."
                 )
 
         return result
@@ -245,74 +256,176 @@ class Mnemos:
             "hint": f"Consider updating #{best_id} instead",
         }, embedding
 
+    # Valid classifications returned by the Tier-3 LLM classifier, plus
+    # their treatment: whether to emit a warning to the caller and which
+    # link type to persist. `relates` is the v10.3.0 addition that kills
+    # the false-positive noise from same-topic-complementary pairs.
+    _CONTRADICTION_CLASSES = {
+        # classification  → (link_type, warn)
+        "contradicts":      ("contradicts",  True),
+        "refines":          ("refines",       True),
+        "evolves":          ("evolves",       True),
+        "relates":          ("relates",       False),  # silent link
+        "unrelated":        (None,            False),  # no link
+    }
+
     def _detect_contradictions(self, new_id, content, project, embedding):
-        """Find topically similar memories that might contradict the new one.
+        """Find topically similar memories and classify the relationship.
 
-        Precision-first filter chain (tightened 2026-04-09 after an
-        autoimprove iteration eliminated 4 false positives observed in a
-        store batch):
+        Three-tier pipeline (v10.3.0, 2026-04-16). Previous single-threshold
+        design flagged any same-topic pair as a contradiction because the
+        cross-encoder scores topical overlap, not semantic conflict. The
+        new scheme introduces a `relates` link type for moderate-score
+        pairs (silent, no warning) and reserves `contradicts` for pairs
+        that either score above CONTRADICTION_RERANK_HIGH or are
+        explicitly classified as contradictory by an LLM.
 
-          1. Vector similarity gate  (L2 < CONTRADICTION_VEC_THRESHOLD)
-          2. Same-project filter     (cross-project topical overlap is
-                                      almost always complementary, not
-                                      contradictory, this kills the bulk
-                                      of observed FPs)
-          3. Cross-encoder rerank    (score >= CONTRADICTION_RERANK_THRESHOLD)
+        Tiers:
+          1. Vec gate (L2 < CONTRADICTION_VEC_THRESHOLD, same-project filter)
+          2. Cross-encoder rerank (drops vec-candidates below MIN threshold)
+          3. Classification:
+             - mode='vec'    → all vec-gated = contradicts (pre-v10.3 behavior)
+             - mode='rerank' → score >= HIGH = contradicts, MIN..HIGH = relates
+             - mode='llm'    → LLM classifies all rerank survivors into one of
+                               {contradicts, refines, evolves, relates, unrelated}
 
-        The cross-encoder answers "are these about the same topic?" rather
-        than "do these say opposite things?", so it cannot be trusted alone
-        as a contradiction signal, vec gate + project filter carry most of
-        the precision load.
+        Mode is set via MNEMOS_CONTRADICT_MODE env (default 'rerank').
         """
+        import os
+        mode = os.environ.get(
+            "MNEMOS_CONTRADICT_MODE", DEFAULT_CONTRADICT_MODE,
+        ).lower()
+        if mode == "off":
+            return []
+
+        # Tier 1: vec gate
         vec_results = self.store.search_vec(embedding, limit=10)
         if not vec_results:
             return []
-
         candidate_ids = [
             sid for sid, dist in vec_results
             if sid != new_id and dist < CONTRADICTION_VEC_THRESHOLD
         ]
         if not candidate_ids:
             return []
-
         memories = self.store.get_memories_by_ids(candidate_ids)
-        if not memories:
-            return []
-
-        # Same-project filter: drop candidates from other projects before
-        # running the (expensive) reranker. Contradictions almost always
-        # live inside the same project; cross-project topical matches are
-        # the dominant false-positive source.
+        # Same-project filter (contradictions almost always live within a
+        # project; cross-project topical overlap is mostly complementary)
         memories = {
-            mid: m for mid, m in memories.items()
-            if m.project == project
+            mid: m for mid, m in memories.items() if m.project == project
         }
         if not memories:
             return []
 
+        # Tier 1-only mode: treat every vec-gated candidate as contradicts.
+        # Preserved for users who explicitly opt out of rerank/llm costs.
+        if mode == "vec":
+            warnings = []
+            for mid, mem in memories.items():
+                self.store.store_link(new_id, mid, "contradicts", 0.5)
+                warnings.append(self._contradiction_warning(
+                    mid, mem, 0.5, "contradicts",
+                ))
+            return warnings
+
+        # Tier 2: cross-encoder rerank
         try:
             docs = [{"text": m.content, "id": mid} for mid, m in memories.items()]
             ranked = rerank(content, docs)
         except Exception:
             return []
 
-        contradictions = []
+        llm_available = False
+        if mode == "llm":
+            try:
+                from .consolidation.llm import is_configured as _llm_ok
+                llm_available = _llm_ok()
+            except Exception:
+                llm_available = False
+
+        warnings = []
         for hit in ranked:
             score = _sigmoid(hit.get("_rerank_score", 0))
-            if score < CONTRADICTION_RERANK_THRESHOLD:
-                continue
+            if score < CONTRADICTION_RERANK_MIN:
+                continue  # not even topically similar
             hit_id = hit["id"]
             mem = memories.get(hit_id)
             if not mem:
                 continue
-            self.store.store_link(new_id, hit_id, "contradicts", round(score, 4))
-            contradictions.append({
-                "conflicting_id": hit_id,
-                "conflicting_content": mem.content[:200],
-                "conflicting_project": mem.project,
-                "similarity": round(score, 4),
-            })
-        return contradictions
+
+            # Tier 3: classify
+            classification = self._classify_relationship(
+                content, mem.content, score, mode, llm_available,
+            )
+            link_type, warn = self._CONTRADICTION_CLASSES.get(
+                classification, ("relates", False),
+            )
+
+            # Persist link (skipped for `unrelated`)
+            if link_type is not None:
+                self.store.store_link(new_id, hit_id, link_type, round(score, 4))
+
+            # Emit warning only for classifications that need caller attention
+            if warn:
+                warnings.append(self._contradiction_warning(
+                    hit_id, mem, score, classification,
+                ))
+        return warnings
+
+    def _classify_relationship(self, new_content, existing_content, score,
+                               mode, llm_available):
+        """Return one of: contradicts / refines / evolves / relates / unrelated.
+
+        Rerank-only mode uses the score as a crude proxy: HIGH score =
+        contradicts (same topic + strong match could be disagreement), MIN..HIGH
+        score = relates (same topic, complementary). LLM mode replaces the
+        rerank-score heuristic at Tier 3 with an actual semantic call.
+        """
+        if mode == "llm" and llm_available:
+            try:
+                from .consolidation.llm import chat
+                msgs = [
+                    {"role": "system", "content": (
+                        "Classify the relationship between two memory entries. "
+                        "Reply with exactly one word from: contradicts, refines, "
+                        "evolves, relates, unrelated.\n\n"
+                        "contradicts: explicit conflict (A says X, B says not-X on same subject).\n"
+                        "refines: B refines/expands/corrects a fact in A (same subject, added detail, no conflict).\n"
+                        "evolves: B is a temporally-later update of A's fact (A was true then, B is true now).\n"
+                        "relates: same topic but complementary, no conflict, no temporal progression.\n"
+                        "unrelated: different topics despite surface similarity."
+                    )},
+                    {"role": "user", "content": (
+                        f"Entry A:\n{(existing_content or '')[:600]}\n\n"
+                        f"Entry B (new):\n{(new_content or '')[:600]}\n\n"
+                        "Classification:"
+                    )},
+                ]
+                response = chat(msgs, max_tokens=16, temperature=0.0)
+                if response:
+                    word = response.strip().lower().split()[0].strip(".,:;!?")
+                    if word in self._CONTRADICTION_CLASSES:
+                        return word
+            except Exception:
+                pass
+            # LLM failed → fall through to rerank heuristic
+
+        # Rerank-score heuristic (also the default when mode='rerank')
+        if score >= CONTRADICTION_RERANK_HIGH:
+            return "contradicts"
+        return "relates"
+
+    @staticmethod
+    def _contradiction_warning(hit_id, mem, score, classification):
+        link_type = Mnemos._CONTRADICTION_CLASSES.get(classification, ("relates", False))[0]
+        return {
+            "conflicting_id": hit_id,
+            "conflicting_content": (mem.content or "")[:200],
+            "conflicting_project": mem.project,
+            "similarity": round(score, 4),
+            "classification": classification,
+            "suggested_action": f"link:{link_type}" if link_type else "no_action",
+        }
 
     # --- Search ---
 

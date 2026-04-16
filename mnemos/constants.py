@@ -38,13 +38,39 @@ CONFIRM_BOOST_30D = 0.3
 CONFIRM_BOOST_90D = 0.15
 
 # --- Contradiction detection ---
-# Tightened 2026-04-09 after autoimprove iteration on a 15-pair eval set:
-# baseline (vec 0.60, rr 0.50) scored F1=0.500 with 1 FP and 3 FNs; winning
-# config (vec 0.35, rr 0.35, require_same_project=True) scored F1=1.0 with
-# 0 FPs and 0 FNs. Tight vec gate + strict same-project filter eliminates
-# cross-project topical neighbors that the cross-encoder over-rates.
+# Tiered classification (v10.3.0, 2026-04-16). The previous single-threshold
+# design conflated "same topic" (what the cross-encoder scores) with "actually
+# contradicts" (what we care about), producing noisy false positives on
+# same-topic-complementary pairs. New scheme:
+#
+#   vec distance < CONTRADICTION_VEC_THRESHOLD   → candidate, proceed
+#   rerank < CONTRADICTION_RERANK_MIN            → skip (not even topical)
+#   rerank CONTRADICTION_RERANK_MIN..HIGH        → likely `relates` (silent link, no warning)
+#   rerank >= CONTRADICTION_RERANK_HIGH          → likely contradicts (link + warning),
+#                                                   OR Tier-3 LLM classification if enabled
+#
+# The 2026-04-09 autoimprove tuning result (vec 0.35, rr 0.35, same-project
+# filter) is preserved as the min gate; the new HIGH threshold introduces
+# the silent-link zone that kills false-positive warnings.
 CONTRADICTION_VEC_THRESHOLD = 0.35
-CONTRADICTION_RERANK_THRESHOLD = 0.35
+CONTRADICTION_RERANK_MIN = 0.35    # below: skip entirely
+CONTRADICTION_RERANK_HIGH = 0.60   # above: likely contradicts; between: relates
+
+# Backward-compat alias: v10.2.x code that imported the old name stays working.
+CONTRADICTION_RERANK_THRESHOLD = CONTRADICTION_RERANK_MIN
+
+# --- Contradiction detection mode ---
+# Three-tier classification behaviour:
+#   off    — disable contradiction detection entirely
+#   vec    — Tier 1 only (vec gate, no rerank); all vec-gated pairs → contradicts
+#   rerank — Tier 1 + Tier 2 (default, recommended): vec + rerank with HIGH
+#            threshold distinguishing `contradicts` from `relates`
+#   llm    — Tier 1 + Tier 2 + Tier 3 LLM classification: moderate-score pairs
+#            are classified by LLM into {contradicts, refines, evolves,
+#            relates, unrelated}. Requires MNEMOS_LLM_* env vars configured.
+DEFAULT_CONTRADICT_MODE = os.environ.get(
+    "MNEMOS_CONTRADICT_MODE", "rerank"
+).lower()
 
 # --- Dedup rerank threshold ---
 DEDUP_RERANK_THRESHOLD = 0.70
