@@ -227,6 +227,17 @@ class MnemosStore(ABC):
         """
         return None
 
+    # --- Tool usage logging (opt-in, used when MNEMOS_TOOL_USAGE_LOG=1) ---
+
+    def log_tool_usage(self, tool_name: str) -> None:
+        """Persist a single tool call: name + timestamp, nothing else.
+
+        Default implementation is a no-op. SQLite backend writes one row
+        to `tool_usage`. Useful for health diagnostics without parsing
+        MCP server stdin/stdout logs. Carries no user content.
+        """
+        return None
+
     # --- Consolidation run logging (always-on, written from Nyx orchestrator) ---
 
     def log_consolidation_run(

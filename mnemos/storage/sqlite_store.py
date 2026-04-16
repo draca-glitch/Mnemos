@@ -234,6 +234,16 @@ class SQLiteStore(MnemosStore):
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_memory ON retrieval_log(memory_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_useful ON retrieval_log(useful)")
+        # Tool-usage log (opt-in; populated when MNEMOS_TOOL_USAGE_LOG=1).
+        # Only tool name + timestamp — no content, no query text, no IDs.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tool_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool_name TEXT NOT NULL,
+                called_at TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_usage_called_at ON tool_usage(called_at)")
         conn.commit()
 
     # --- CRUD ---
@@ -640,6 +650,26 @@ class SQLiteStore(MnemosStore):
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (clusters_found, clusters_merged, memories_archived,
                  memories_created, details, phase_details),
+            )
+            conn.commit()
+        except Exception:
+            pass
+
+    # --- Tool usage logging ---
+
+    def log_tool_usage(self, tool_name):
+        """Insert one row recording an MCP tool call.
+
+        Failures swallowed — tool_usage is diagnostics only, never a hard
+        dependency of server correctness.
+        """
+        if not tool_name:
+            return
+        try:
+            conn = self._get_conn()
+            conn.execute(
+                "INSERT INTO tool_usage (tool_name) VALUES (?)",
+                (tool_name,),
             )
             conn.commit()
         except Exception:

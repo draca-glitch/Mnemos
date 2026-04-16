@@ -100,6 +100,19 @@ DEFAULT_RETRIEVAL_LOG = os.environ.get(
     "MNEMOS_RETRIEVAL_LOG", "0"
 ).lower() in ("1", "true", "yes", "on")
 
+# --- Tool usage logging (opt-in, minimal diagnostic telemetry) ---
+# When enabled, every MCP tool call records (tool_name, timestamp) to a
+# `tool_usage` table. Purpose: health-check tooling can answer "has the MCP
+# server been responsive?" without parsing stdin/stdout logs. Cost: one
+# INSERT per tool call, bytes per day of storage. Contains no query text,
+# no memory content, no IDs — only the tool name + when it was called.
+# Default off for consistency with retrieval_log, though privacy footprint
+# is essentially zero since no user content is captured.
+#   export MNEMOS_TOOL_USAGE_LOG=1   # enable
+DEFAULT_TOOL_USAGE_LOG = os.environ.get(
+    "MNEMOS_TOOL_USAGE_LOG", "0"
+).lower() in ("1", "true", "yes", "on")
+
 # --- Storage paths ---
 DEFAULT_DB_PATH = os.environ.get(
     "MNEMOS_DB",

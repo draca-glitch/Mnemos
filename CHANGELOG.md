@@ -20,6 +20,39 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.2.2] - 2026-04-16 (opt-in tool_usage logging)
+
+### Added
+
+- **`tool_usage` table + opt-in write path**. When `MNEMOS_TOOL_USAGE_LOG=1`
+  every MCP tool call records `(tool_name, called_at)` — no arguments, no
+  content, no IDs. Useful for health-check tooling that wants to answer
+  "has the MCP server been responsive?" without parsing stdin/stdout logs.
+  Default off for consistency with retrieval_log, though the privacy
+  footprint is essentially zero since no user content is captured.
+
+  Schema:
+  ```sql
+  tool_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_name TEXT NOT NULL,
+    called_at TEXT DEFAULT (datetime('now', 'localtime'))
+  )
+  ```
+
+  Backend API: `MnemosStore.log_tool_usage(tool_name)`. Base class no-op;
+  SQLiteStore does the INSERT. MCP server calls it in `tools/call`
+  dispatch when the flag is set. Failures swallowed — diagnostics only.
+
+### MCP deployment completeness
+
+With v10.2.2, a Mnemos MCP server provides every analytics table an
+operator health-check script expects: `retrieval_log` (search history),
+`consolidation_log` (Nyx audit), `tool_usage` (tool call diagnostics).
+All three are opt-in; enable via env vars per deployment.
+
+---
+
 ## [10.2.1] - 2026-04-16 (consolidation_log always available, clean audit API)
 
 ### Changed

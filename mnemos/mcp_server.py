@@ -18,7 +18,10 @@ import os
 import sys
 
 from .core import Mnemos
-from .constants import DEFAULT_PROJECTS, VALID_TYPES, VALID_LAYERS, DEFAULT_NAMESPACE, CML_MODE
+from .constants import (
+    DEFAULT_PROJECTS, VALID_TYPES, VALID_LAYERS, DEFAULT_NAMESPACE,
+    CML_MODE, DEFAULT_TOOL_USAGE_LOG,
+)
 
 
 _STORE_DESC_CML = (
@@ -288,7 +291,7 @@ def main():
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "mnemos", "version": "10.2.1"},
+                    "serverInfo": {"name": "mnemos", "version": "10.2.2"},
                 },
             })
             # Warm up the embedder so first search is instant
@@ -315,6 +318,15 @@ def main():
         elif method == "tools/call":
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
+            # Opt-in tool-usage logging: if enabled, record tool_name +
+            # timestamp. No arguments, no content. Useful for health-check
+            # tooling that wants to answer "was the server responsive?"
+            # without parsing MCP stdin/stdout logs.
+            if DEFAULT_TOOL_USAGE_LOG:
+                try:
+                    mnemos.store.log_tool_usage(tool_name)
+                except Exception:
+                    pass
             handler = TOOL_DISPATCH.get(tool_name)
             if not handler:
                 send_msg({
