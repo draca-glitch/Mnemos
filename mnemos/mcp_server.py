@@ -288,7 +288,7 @@ def main():
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "mnemos", "version": "10.1.1"},
+                    "serverInfo": {"name": "mnemos", "version": "10.1.2"},
                 },
             })
             # Warm up the embedder so first search is instant

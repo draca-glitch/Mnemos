@@ -570,11 +570,43 @@ class Mnemos:
 
     # --- Briefing / digest / map / health ---
 
+    @staticmethod
+    def _briefing_line(content: str, max_chars: int = 160) -> str:
+        """Truncate a memory's first line for briefing with a natural boundary
+        and an ellipsis marker.
+
+        Prefers sentence-ending punctuation ('. ', '! ', '? ') over clause
+        boundaries ('; ', ', ') over word boundaries, and always appends
+        ' …' when truncation occurred. Previously, raw [:180] slicing left
+        fragments like '... we don\\'t' that read as mid-sentence even when
+        they happened to land on a word boundary.
+        """
+        line = (content or "").split("\n")[0].strip()
+        if len(line) <= max_chars:
+            return line
+        cut = line[:max_chars]
+        min_cut = max_chars // 3
+        for sep in (". ", "! ", "? "):
+            pos = cut.rfind(sep)
+            if pos > min_cut:
+                return cut[:pos + 1] + " …"
+        for sep in ("; ", ", "):
+            pos = cut.rfind(sep)
+            if pos > min_cut:
+                return cut[:pos] + " …"
+        pos = cut.rfind(" ")
+        if pos > min_cut:
+            return cut[:pos] + " …"
+        return cut + "…"
+
     def briefing(self, project: Optional[str] = None, budget_chars: int = 1300) -> str:
         """Compact session-start briefing of top memories by importance + recency.
 
         Returns a markdown string fitting roughly `budget_chars` characters.
         Designed to be injected into AI session context (~370 tokens at default).
+        Per-entry truncation uses sentence-aware boundaries with an ellipsis
+        marker so lines that got cut off read cleanly rather than dangling
+        mid-sentence.
         """
         if hasattr(self.store, "_get_conn"):
             conn = self.store._get_conn()
@@ -600,7 +632,7 @@ class Mnemos:
         header = f"# Mnemos briefing ({self.namespace})\n\n"
         used += len(header)
         for r in rows:
-            line = f"- [{r['project']}] {r['content'][:180]}\n"
+            line = f"- [{r['project']}] {self._briefing_line(r['content'])}\n"
             if used + len(line) > budget_chars:
                 break
             lines.append(line)
@@ -708,15 +740,64 @@ class Mnemos:
         report["status"] = "healthy" if not report["issues"] else "issues_detected"
         return report
 
-    def prime(self, context: str, project: Optional[str] = None, limit: int = 5) -> list:
+    # CWD → (project, subcategory) heuristic used by prime(). Empty by
+    # default; applications with known repo layouts should subclass and
+    # override, or pass `cwd_map` at call time. Without this, a bare
+    # CWD signal produces a vec query that matches random memories
+    # across all projects.
+    CWD_PROJECT_MAP: list = []
+
+    @classmethod
+    def _resolve_cwd_context(cls, cwd: Optional[str],
+                             cwd_map: "Optional[list]" = None):
+        """Map a working directory to (project, subcategory, tokens).
+
+        `cwd_map` is a list of (path_prefix, project, subcategory) tuples.
+        First matching prefix wins, so more-specific paths should come
+        first. Returns (None, None, []) if no mapping matches.
+        """
+        if not cwd:
+            return None, None, []
+        mapping = cwd_map if cwd_map is not None else cls.CWD_PROJECT_MAP
+        for prefix, proj, subcat in mapping:
+            if cwd.startswith(prefix):
+                tokens = [proj]
+                if subcat:
+                    tokens.append(subcat)
+                return proj, subcat, tokens
+        return None, None, []
+
+    def prime(self, context: str, project: Optional[str] = None,
+              limit: int = 5, cwd: Optional[str] = None,
+              cwd_map: "Optional[list]" = None) -> list:
         """Surface memories likely relevant to a context string.
 
-        Used by session hooks to inject relevant memories at startup.
-        Lightweight wrapper around hybrid search.
+        Used by session hooks to inject relevant memories at startup or
+        on first user prompt. Lightweight wrapper around hybrid search.
+
+        When `cwd` is provided, the CWD is resolved via `cwd_map` (or
+        the class-level `CWD_PROJECT_MAP`) to an inferred project and
+        subcategory. The inferred project becomes the exclusive filter
+        for results (unless the caller passed an explicit `project`
+        that takes precedence), and the project/subcat tokens are
+        prepended to the vec query so the semantic anchor is stronger
+        than path-token bleed alone.
         """
-        if not context:
+        # CWD heuristic: infer project/subcategory from the working directory
+        cwd_project, _cwd_subcat, cwd_tokens = self._resolve_cwd_context(cwd, cwd_map)
+        effective_project = project or cwd_project
+
+        # Augment the context string with CWD-derived tokens if any
+        if cwd_tokens:
+            augmented = " ".join(cwd_tokens) + (" " + context if context else "")
+        else:
+            augmented = context
+
+        if not augmented:
             return []
-        result = self.search(context, project=project, limit=limit, search_mode="hybrid")
+        result = self.search(
+            augmented, project=effective_project, limit=limit, search_mode="hybrid",
+        )
         return result.get("results", [])
 
     def consolidate(self, execute: bool = False,

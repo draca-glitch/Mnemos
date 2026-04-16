@@ -20,6 +20,57 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.1.2] - 2026-04-16 (session-hook ergonomics: briefing truncation + CWD priming)
+
+Two small but daily-visible improvements to the session-hook pipeline that
+callers inject at session start (and optionally on first user prompt).
+
+### Fixed
+
+- **Briefing truncation now sentence-aware with ellipsis marker**. Previous
+  `content[:180]` raw slice left fragments like `"we don't` that read as
+  mid-sentence even when they technically landed on a word boundary. New
+  `_briefing_line()` helper prefers sentence-ending punctuation (`. ! ?`)
+  over clause boundaries (`; ,`) over word boundaries, and always appends
+  ` …` when truncation occurred. A line cut at `"...(2026-04-11). …"` now
+  reads as cleanly truncated instead of dangling.
+
+### Added
+
+- **CWD → project/subcategory heuristic on `Mnemos.prime()`**. New optional
+  `cwd` and `cwd_map` parameters. When a working directory matches a
+  configured path prefix (e.g. `/root/work/mnemos → project=dev,
+  subcategory=mnemos`), the inferred project filters results and the
+  project/subcat tokens are prepended to the vec query. Without this,
+  bare `/root` CWD signals produced vec queries that matched random
+  memories across all projects. Applications with known repo layouts
+  override `Mnemos.CWD_PROJECT_MAP` (class attribute) or pass `cwd_map`
+  at call time. Defaults to empty list, so existing callers see no
+  behavior change.
+
+### Session hook pattern (for reference)
+
+These two fixes only deliver full value when paired with a hook that
+fires on **first user prompt** (not just session start). At SessionStart
+the only context signal is CWD; at first-user-prompt the actual
+question is available as a vec query. The repo now ships a reference
+hook script at `scripts/memory-session-hook.sh` demonstrating the
+three-hook pattern (SessionStart / UserPromptSubmit / Stop) that wraps
+`Mnemos.briefing()` and `Mnemos.prime()` for Claude Code, Cursor, and
+other MCP clients. See `docs/session-hooks.md` for wiring instructions.
+
+### Design principle: no LLM at stop-time
+
+The reference stop-hook deliberately does NOT call an LLM to summarize
+what the session covered. The in-session LLM is authoritative for
+memory decisions and already has full context; a post-hoc LLM pass
+would duplicate effort, create split responsibility, and cost twice
+per session. If a session ends without any stores, the correct fix is
+in-session prompting (CLAUDE.md rules, tool descriptions) rather than
+a second pipeline.
+
+---
+
 ## [10.1.1] - 2026-04-16 (embed_vec schema compatibility)
 
 ### Fixed
