@@ -130,20 +130,28 @@ def cmd_embed_status(mnemos, args):
 
 
 def cmd_doctor(mnemos, args):
-    report = mnemos.doctor()
+    report = mnemos.doctor(migrate=getattr(args, "migrate", False))
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
         return
-    print(f"# Mnemos doctor (namespace: {report['namespace']}")
+    print(f"# Mnemos doctor (namespace: {report['namespace']})")
     print(f"\nStatus: {report['status']}\n")
+    if report.get("backup"):
+        print(f"Pre-migration backup: {report['backup']}\n")
     if report.get("checks"):
         print("Checks:")
         for c in report["checks"]:
             print(f"  ok  {c}")
+    if report.get("migrations_applied"):
+        print("\nMigrations applied:")
+        for m in report["migrations_applied"]:
+            print(f"  +   {m}")
     if report.get("issues"):
         print("\nIssues:")
         for i in report["issues"]:
             print(f"  !!  {i}")
+        if not getattr(args, "migrate", False):
+            print("\nRun `mnemos doctor --migrate` to apply safe fixes.")
 
 
 def cmd_prime(mnemos, args):
@@ -304,7 +312,9 @@ def main(argv=None):
     p.set_defaults(fn=cmd_embed_status)
 
     # doctor
-    p = sub.add_parser("doctor", help="Health check, sanity-check the store")
+    p = sub.add_parser("doctor", help="Health check (and optional self-repair of schema drift)")
+    p.add_argument("--migrate", action="store_true",
+                   help="Apply safe fixes for detected schema drift (backfills missing columns, creates missing aux tables, rebuilds out-of-sync FTS index). Creates a pre-migration DB backup before any changes.")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_doctor)
 

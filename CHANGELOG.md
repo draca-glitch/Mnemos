@@ -20,6 +20,37 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.5] - 2026-04-16 (`mnemos doctor --migrate` + column backfill extended)
+
+### Added
+
+- **`mnemos doctor --migrate`** flag: apply safe fixes for detected schema
+  drift. Before touching anything, copies the DB to
+  `{db}.bak-pre-doctor-migrate-{timestamp}` so rollback is a file copy.
+  Then:
+  - Backfills any missing column in `memories` via init_schema's ALTER
+    pass (v10.3.4+)
+  - Creates any missing aux table (`retrieval_log`, `tool_usage`,
+    `consolidation_log`, `nyx_state`)
+  - Rebuilds out-of-sync FTS index (INSERT INTO memories_fts(memories_fts)
+    VALUES ('rebuild'))
+  - Reports which migrations were applied and which issues remain
+  Idempotent. Never drops data.
+
+- **Column backfill extended** to include `type`, `last_accessed`,
+  `updated_at`. v10.3.4 missed these; pre-v10 DBs that used v8-era
+  schema without `type` column would still throw on
+  `CREATE INDEX idx_mem_type`.
+
+### Changed
+
+- **`Mnemos.doctor(migrate=False)`** now takes an optional `migrate`
+  keyword. Default is inspection-only (existing behavior). When True,
+  triggers the migration pass and includes `migrations_applied` + `backup`
+  fields in the returned report.
+
+---
+
 ## [10.3.4] - 2026-04-16 (graceful init_schema on pre-v10 DBs + calibration dataset)
 
 ### Fixed

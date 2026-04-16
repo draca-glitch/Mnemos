@@ -135,6 +135,7 @@ class SQLiteStore(MnemosStore):
         existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
         _column_backfills = [
             ("namespace",         "TEXT NOT NULL DEFAULT 'default'"),
+            ("type",              "TEXT DEFAULT 'fact'"),
             ("nyx_processed",     "TEXT DEFAULT NULL"),
             ("subcategory",       "TEXT DEFAULT NULL"),
             ("valid_from",        "TEXT DEFAULT NULL"),
@@ -143,6 +144,8 @@ class SQLiteStore(MnemosStore):
             ("consolidation_lock", "INTEGER DEFAULT 0"),
             ("verified",          "INTEGER DEFAULT 0"),
             ("last_confirmed",    "TEXT DEFAULT NULL"),
+            ("last_accessed",     "TEXT DEFAULT NULL"),
+            ("updated_at",        "TEXT DEFAULT (datetime('now', 'localtime'))"),
         ]
         for col, coldef in _column_backfills:
             if col not in existing_cols:

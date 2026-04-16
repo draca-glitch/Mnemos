@@ -968,22 +968,98 @@ class Mnemos:
             "coverage": round(embedded / active, 4) if active else 0.0,
         }
 
-    def doctor(self) -> dict:
-        """Health check, sanity-check the store and report issues."""
+    def doctor(self, migrate: bool = False) -> dict:
+        """Health check + optional self-repair. Sanity-checks the store and
+        reports issues; when `migrate=True`, safely applies migrations for
+        detected schema drift with an automatic pre-migration DB backup.
+
+        Migrations are safe and reversible:
+          - Missing columns in `memories` → ALTER TABLE ADD COLUMN with
+            documented defaults (idempotent, triggered by init_schema
+            backfill in v10.3.4+, doctor --migrate just re-runs it)
+          - Missing `namespace` index → CREATE INDEX
+          - Missing `retrieval_log` / `tool_usage` / `consolidation_log` /
+            `nyx_state` tables → CREATE TABLE from current schema
+        Never drops data. Backup path is returned in the report so callers
+        can roll back.
+        """
         if not hasattr(self.store, "_get_conn"):
             return {"error": "doctor only supported on SQLite-based stores"}
         conn = self.store._get_conn()
-        report = {"namespace": self.namespace, "checks": [], "issues": []}
+        report = {
+            "namespace": self.namespace,
+            "checks": [],
+            "issues": [],
+            "migrations_applied": [],
+        }
 
+        # --- Schema drift detection ---
         cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
         required = {"id", "project", "content", "type", "layer", "subcategory",
                     "valid_from", "valid_until", "namespace"}
-        missing = required - cols
-        if missing:
-            report["issues"].append(f"Missing columns in memories: {sorted(missing)}")
+        missing_cols = required - cols
+        if missing_cols:
+            report["issues"].append(f"Missing columns in memories: {sorted(missing_cols)}")
         else:
             report["checks"].append("Schema is up to date (v10)")
 
+        # Detect missing auxiliary tables that v10.2+ expects
+        existing_tables = {
+            r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        expected_aux = {"retrieval_log", "tool_usage", "consolidation_log", "nyx_state"}
+        missing_tables = expected_aux - existing_tables
+        if missing_tables:
+            report["issues"].append(f"Missing aux tables: {sorted(missing_tables)}")
+
+        # Backup before any migrations
+        if migrate and (missing_cols or missing_tables) and hasattr(self.store, "db_path"):
+            import shutil, time
+            src = self.store.db_path
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            backup = f"{src}.bak-pre-doctor-migrate-{ts}"
+            try:
+                shutil.copy2(src, backup)
+                report["backup"] = backup
+            except Exception as e:
+                report["issues"].append(f"Backup failed; aborting migrations: {e}")
+                migrate = False  # bail out safely
+
+        if migrate and missing_cols:
+            # init_schema already knows how to backfill; invoking it is the
+            # cleanest migration path since it has the authoritative column
+            # defaults baked in.
+            try:
+                self.store.init_schema()
+                post_cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
+                backfilled = sorted(missing_cols & post_cols)
+                if backfilled:
+                    report["migrations_applied"].append(
+                        f"Backfilled columns: {backfilled}"
+                    )
+            except Exception as e:
+                report["issues"].append(f"Column migration failed: {e}")
+
+        if migrate and missing_tables:
+            try:
+                # init_schema also creates aux tables if absent
+                self.store.init_schema()
+                post_tables = {
+                    r[0] for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                created = sorted(missing_tables & post_tables)
+                if created:
+                    report["migrations_applied"].append(
+                        f"Created aux tables: {created}"
+                    )
+            except Exception as e:
+                report["issues"].append(f"Table migration failed: {e}")
+
+        # --- FTS sanity ---
         mem_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
         try:
             fts_count = conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
@@ -991,18 +1067,57 @@ class Mnemos:
                 report["issues"].append(
                     f"FTS index out of sync: {mem_count} memories vs {fts_count} FTS rows"
                 )
+                if migrate:
+                    try:
+                        # Rebuild FTS from scratch (idempotent, cheap at <50K memories)
+                        conn.execute(
+                            "INSERT INTO memories_fts(memories_fts) VALUES('rebuild')"
+                        )
+                        conn.commit()
+                        new_count = conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+                        report["migrations_applied"].append(
+                            f"Rebuilt FTS index ({new_count} rows)"
+                        )
+                    except Exception as e:
+                        report["issues"].append(f"FTS rebuild failed: {e}")
             else:
                 report["checks"].append(f"FTS index synced ({fts_count} rows)")
         except Exception as e:
             report["issues"].append(f"FTS check failed: {e}")
 
+        # --- Embedding coverage ---
         cov = self.embed_status()
         if cov.get("missing", 0) > 0:
             report["issues"].append(
                 f"{cov['missing']} active memories without embeddings ({cov['coverage']:.0%} coverage)"
             )
+            # Note: doctor --migrate does NOT auto-embed missing memories;
+            # embedding cost/time is caller-controlled. Document as pending.
+            if migrate:
+                report["checks"].append(
+                    "Embedding backfill skipped (runtime cost; use `mnemos embed-fill` "
+                    "or call store_memory on affected rows to trigger re-embed)"
+                )
         else:
             report["checks"].append(f"Embeddings: 100% coverage ({cov.get('embedded', 0)} vectors)")
+
+        # Re-check issues post-migration so callers see the clean state
+        if migrate and report["migrations_applied"]:
+            # Filter out issues that were resolved
+            post_cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
+            post_tables = {
+                r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            resolved_issues = []
+            for issue in report["issues"]:
+                if "Missing columns" in issue and not (required - post_cols):
+                    continue  # resolved
+                if "Missing aux tables" in issue and not (expected_aux - post_tables):
+                    continue
+                resolved_issues.append(issue)
+            report["issues"] = resolved_issues
 
         report["status"] = "healthy" if not report["issues"] else "issues_detected"
         return report
