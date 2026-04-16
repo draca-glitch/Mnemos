@@ -735,16 +735,79 @@ class SQLiteStore(MnemosStore):
 
     def list_tags(self, namespace=None, project=None, min_count=1,
                   order_by="count", limit=500):
-        """Aggregate unique tags from the tags CSV column across active memories.
+        """Aggregate unique tags from the tags CSV column via a recursive
+        CTE that splits the CSV server-side. Scales better than the
+        previous Python-side fetch-all-rows-and-split approach for large
+        deployments; at modest sizes (<5K memories) the difference is
+        negligible either way.
 
-        Tags are stored as comma-separated strings. This method splits,
-        normalizes (strip whitespace, drop empties), aggregates counts,
-        and returns one row per unique tag with an example memory ID.
+        Tags are stored as comma-separated strings. The CTE walks each
+        row's `tags` column, emits one row per tag, trims whitespace,
+        drops empties. GROUP BY counts and MIN(id) picks the smallest-id
+        memory per tag as the example anchor.
         """
         conn = self._get_conn()
         ns = namespace or self.namespace
+        where = "m.status = 'active' AND m.namespace = ? AND m.tags != ''"
+        params: list = [ns]
+        if project:
+            where += " AND m.project = ?"
+            params.append(project)
+
+        order_sql = (
+            'ORDER BY LOWER(tag) ASC'
+            if order_by == "alpha"
+            else 'ORDER BY "count" DESC, LOWER(tag) ASC'
+        )
+
+        try:
+            rows = conn.execute(
+                f"""
+                WITH RECURSIVE split(mid, tag, rest) AS (
+                    -- Seed: one row per memory, tag empty, rest = full tags CSV
+                    -- appended with ',' so the final tag has a comma to split on.
+                    SELECT m.id, '', m.tags || ','
+                    FROM memories m
+                    WHERE {where}
+
+                    UNION ALL
+
+                    -- Recur: carve off the next tag up to the first comma,
+                    -- leave the remainder for the next iteration.
+                    SELECT mid,
+                           substr(rest, 1, instr(rest, ',') - 1),
+                           substr(rest, instr(rest, ',') + 1)
+                    FROM split
+                    WHERE rest != '' AND instr(rest, ',') > 0
+                )
+                SELECT TRIM(tag)         AS tag,
+                       COUNT(*)          AS "count",
+                       MIN(mid)          AS example_id
+                FROM split
+                WHERE TRIM(tag) != ''
+                GROUP BY TRIM(tag)
+                HAVING COUNT(*) >= ?
+                {order_sql}
+                LIMIT ?
+                """,
+                params + [min_count, limit],
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # Recursive CTE depth limit or similar — fall back to Python-side
+            # aggregation for safety. SQLite's default recursion limit is
+            # high (1000), so this should only trip on pathological tag
+            # strings.
+            return self._list_tags_python_fallback(
+                ns, project, min_count, order_by, limit,
+            )
+        return [dict(r) for r in rows]
+
+    def _list_tags_python_fallback(self, namespace, project, min_count,
+                                   order_by, limit):
+        """Python-side fallback path, identical semantics to the CTE query."""
+        conn = self._get_conn()
         where = "status = 'active' AND namespace = ? AND tags != ''"
-        params = [ns]
+        params = [namespace]
         if project:
             where += " AND project = ?"
             params.append(project)
@@ -759,16 +822,21 @@ class SQLiteStore(MnemosStore):
                 if not tag:
                     continue
                 counts[tag] = counts.get(tag, 0) + 1
-                examples.setdefault(tag, r["id"])
+                if tag not in examples or r["id"] < examples[tag]:
+                    examples[tag] = r["id"]
         items = [
-            {"tag": t, "count": c, "example_id": examples[t]}
+            {"tag": t, "cnt": c, "example_id": examples[t]}
             for t, c in counts.items() if c >= min_count
         ]
         if order_by == "alpha":
             items.sort(key=lambda x: x["tag"].lower())
         else:
-            items.sort(key=lambda x: (-x["count"], x["tag"].lower()))
-        return items[:limit]
+            items.sort(key=lambda x: (-x["cnt"], x["tag"].lower()))
+        # Normalize key naming to match CTE output
+        return [
+            {"tag": it["tag"], "count": it["cnt"], "example_id": it["example_id"]}
+            for it in items[:limit]
+        ]
 
     # --- Snippet extraction (FTS5 snippet() built-in) ---
 

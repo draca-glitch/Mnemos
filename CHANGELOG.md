@@ -20,6 +20,48 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.8] - 2026-04-16 (SQL-based tag aggregation for scale)
+
+### Changed
+
+- **`list_tags` now uses a SQLite recursive CTE** to split the tags CSV
+  server-side instead of fetching all rows and aggregating in Python.
+  Scales better for large deployments (no O(N) fetch of full tag rows
+  into Python memory). At modest sizes (< 5K memories) the difference
+  is negligible either way. Python-side fallback preserved for safety
+  (triggered only if the CTE hits SQLite's recursion depth limit, which
+  shouldn't happen on realistic tag strings).
+
+### Parity
+
+CTE and Python paths verified to return identical results (same tags,
+same counts, same example IDs). API signature unchanged:
+```python
+mnemos.list_tags(project=None, min_count=1, order_by='count', limit=500)
+# Returns: [{"tag": str, "count": int, "example_id": int}, ...]
+```
+
+### Implementation detail
+
+The recursive CTE walks each memory's `tags` column, emitting one row
+per tag by carving off the next substring up to the first comma:
+```sql
+WITH RECURSIVE split(mid, tag, rest) AS (
+  SELECT m.id, '', m.tags || ',' FROM memories m WHERE ...
+  UNION ALL
+  SELECT mid,
+         substr(rest, 1, instr(rest, ',') - 1),
+         substr(rest, instr(rest, ',') + 1)
+  FROM split WHERE rest != ''
+)
+SELECT TRIM(tag), COUNT(*), MIN(mid) FROM split ... GROUP BY TRIM(tag)
+```
+
+Runs entirely in SQLite. No Python-side string operations on the hot
+path.
+
+---
+
 ## [10.3.7] - 2026-04-16 (smarter vec-only snippet fallback)
 
 ### Changed
