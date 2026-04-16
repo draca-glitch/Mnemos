@@ -194,6 +194,31 @@ class SQLiteStore(MnemosStore):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_nyx_memory ON nyx_insights(memory_id)")
+        # Consolidation audit log (always-on). Every Nyx-cycle run emits one
+        # row here via store.log_consolidation_run() — health checks,
+        # "last run" lookups, and post-hoc debugging all read this table.
+        # Schema aligned with Epsilon's v8 layout so a shared DB works.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS consolidation_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_at TEXT DEFAULT (datetime('now', 'localtime')),
+                clusters_found INTEGER DEFAULT 0,
+                clusters_merged INTEGER DEFAULT 0,
+                memories_archived INTEGER DEFAULT 0,
+                memories_created INTEGER DEFAULT 0,
+                details TEXT DEFAULT '',
+                phase_details TEXT DEFAULT '{}'
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_consolidation_run_at ON consolidation_log(run_at)")
+        # Nyx-cycle persistent state between runs (last-run markers, etc.)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS nyx_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
         # Retrieval log (opt-in; populated when MNEMOS_RETRIEVAL_LOG=1). Schema
         # matches the Epsilon custom-server layout so the same table serves
         # both deployments if a DB is shared during migration.
@@ -593,6 +618,32 @@ class SQLiteStore(MnemosStore):
             "by_project": by_project,
             "namespace": ns,
         }
+
+    # --- Consolidation run logging ---
+
+    def log_consolidation_run(self, clusters_found=0, clusters_merged=0,
+                              memories_archived=0, memories_created=0,
+                              details="", phase_details="{}"):
+        """Insert one audit row summarizing a Nyx cycle run.
+
+        Failures are swallowed: the audit log is a best-effort side
+        channel, never a hard dependency of cycle correctness. Callers
+        can rely on the run itself having completed even if logging
+        fails for storage reasons.
+        """
+        try:
+            conn = self._get_conn()
+            conn.execute(
+                "INSERT INTO consolidation_log "
+                "(clusters_found, clusters_merged, memories_archived, "
+                " memories_created, details, phase_details) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (clusters_found, clusters_merged, memories_archived,
+                 memories_created, details, phase_details),
+            )
+            conn.commit()
+        except Exception:
+            pass
 
     # --- Retrieval logging ---
 

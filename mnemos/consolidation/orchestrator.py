@@ -31,7 +31,13 @@ def log(msg):
 # --- Schema migration ---
 
 def _migrate_nyx_schema(conn):
-    """Add Nyx cycle tables. Safe to run repeatedly."""
+    """Ensure Nyx-cycle-adjacent schema exists. Mostly a no-op post-v10.2.1:
+    consolidation_log and nyx_state now live in SQLiteStore.init_schema so
+    they exist from first DB connection (not just first Nyx run). This
+    function is kept as a safety net for older DBs that predate v10.2.1
+    and may not have seen a fresh init, plus for the idx_links_type index
+    which is not redundantly created elsewhere.
+    """
     conn.execute("""
         CREATE TABLE IF NOT EXISTS consolidation_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +46,7 @@ def _migrate_nyx_schema(conn):
             clusters_merged INTEGER DEFAULT 0,
             memories_archived INTEGER DEFAULT 0,
             memories_created INTEGER DEFAULT 0,
-            details TEXT,
+            details TEXT DEFAULT '',
             phase_details TEXT DEFAULT '{}'
         )
     """)
@@ -267,21 +273,14 @@ def run_nyx_cycle(
     if execute:
         p1 = phase_stats.get("phase2", {})
         try:
-            conn.execute(
-                "INSERT INTO consolidation_log "
-                "(clusters_found, clusters_merged, memories_archived, "
-                " memories_created, details, phase_details) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    p1.get("tight_found", 0) + p1.get("topic_found", 0),
-                    p1.get("tight_merged", 0) + p1.get("topic_merged", 0),
-                    p1.get("archived", 0),
-                    p1.get("created", 0),
-                    f"mnemos-nyx-cycle, phases={sorted(phases)}",
-                    json.dumps(phase_stats, default=str),
-                ),
+            store.log_consolidation_run(
+                clusters_found=p1.get("tight_found", 0) + p1.get("topic_found", 0),
+                clusters_merged=p1.get("tight_merged", 0) + p1.get("topic_merged", 0),
+                memories_archived=p1.get("archived", 0),
+                memories_created=p1.get("created", 0),
+                details=f"mnemos-nyx-cycle, phases={sorted(phases)}",
+                phase_details=json.dumps(phase_stats, default=str),
             )
-            conn.commit()
         except Exception as e:
             log(f"Warning: failed to log consolidation run: {e}")
 

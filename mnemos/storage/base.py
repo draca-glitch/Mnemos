@@ -226,3 +226,23 @@ class MnemosStore(ABC):
         pass `session_id=None` to omit; future analytics may group by it.
         """
         return None
+
+    # --- Consolidation run logging (always-on, written from Nyx orchestrator) ---
+
+    def log_consolidation_run(
+        self,
+        clusters_found: int = 0,
+        clusters_merged: int = 0,
+        memories_archived: int = 0,
+        memories_created: int = 0,
+        details: str = "",
+        phase_details: str = "{}",
+    ) -> None:
+        """Persist one row summarizing a Nyx-cycle run.
+
+        Called by the orchestrator at the end of each execute=True run so
+        health checks, last-run lookups, and post-hoc debugging have a
+        durable audit trail. Default implementation is a no-op; SQLite
+        backend writes to the `consolidation_log` table.
+        """
+        return None

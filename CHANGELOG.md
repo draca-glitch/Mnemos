@@ -20,6 +20,39 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.2.1] - 2026-04-16 (consolidation_log always available, clean audit API)
+
+### Changed
+
+- **`consolidation_log` and `nyx_state` tables are now created at first DB
+  connection** (in `SQLiteStore.init_schema`) rather than only on the first
+  Nyx cycle run (`_migrate_nyx_schema`). Previously, deployments that used
+  Mnemos purely as an MCP server without ever running `mnemos consolidate
+  --execute` would lack these tables entirely, breaking health-check tooling
+  and "last run" queries that read `consolidation_log` defensively.
+  `_migrate_nyx_schema` is retained as a safety net for older DBs that
+  predate this change — CREATE IF NOT EXISTS makes it idempotent.
+
+### Added
+
+- **`MnemosStore.log_consolidation_run()`** method for clean orchestrator
+  API. Backends that want Nyx-run audit trails override (SQLite does so
+  with an INSERT into `consolidation_log`); the base is a no-op. The Nyx
+  orchestrator now calls `store.log_consolidation_run(...)` at run end
+  instead of issuing raw SQL, symmetric with the `log_retrieval()` pattern
+  introduced in v10.2.0.
+
+### Why this matters for MCP deployments
+
+With v10.2.1, a Mnemos MCP server pointed at a fresh DB has every table
+that production health-check tooling (Epsilon-style `memory-health-check.py`
+or equivalents) expects: `memories`, `embed_meta`, `embed_vec`,
+`memory_links`, `nyx_insights`, `retrieval_log`, `consolidation_log`,
+`nyx_state`. That closes the last "Mnemos doesn't have the schema the
+operator's scripts expect" gap.
+
+---
+
 ## [10.2.0] - 2026-04-16 (opt-in retrieval logging for real-query analytics)
 
 ### Added
