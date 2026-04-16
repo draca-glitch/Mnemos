@@ -11,7 +11,7 @@
 7. **Storage is pluggable, retrieval is not.** The pipeline (FTS5 + vec + RRF + rerank) is the same across backends. Only persistence varies.
 8. **No auth in the engine.** Mnemos is a memory engine. Authentication is the responsibility of the transport layer (MCP server, HTTP API, etc.).
 9. **Forgetting is a feature.** Exponential temporal decay matches how human memory works. Old, unaccessed memories naturally fade.
-10. **A system should only be as complicated as it needs to be.** Four tools, one database file, no LLM in the pipeline, no GPU. Add complexity when the workload demands it, not before.
+10. **A system should only be as complicated as it needs to be.** Four hot-path tools plus two maintenance tools, one database file, no LLM in the pipeline, no GPU. Add complexity when the workload demands it, not before.
 
 ## Layered architecture
 
@@ -23,8 +23,8 @@
                      │ JSON-RPC 2.0 / stdio
 ┌────────────────────▼────────────────────────────────────────┐
 │                  mnemos.mcp_server                           │
-│      4 memory tools: store, search, get, update              │
-│      + 1 schema tool: list_tags                              │
+│      4 hot-path tools: store, search, get, update            │
+│      + 2 maintenance tools: bulk_rewrite, list_tags          │
 └────────────────────┬────────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────────┐
@@ -377,4 +377,4 @@ This is the same separation Postgres uses (no auth in the query engine, all role
 
 In practice the single-user case is where most Mnemos deployments sit: "my AI assistant has a memory of me", not "a shared memory service for a team". For that case the namespace + filesystem permissions story is enough. Building a real auth layer when there is only one user is just dead code and additional attack surface. Genuinely multi-tenant workloads (hosted services with multiple paying users, team-shared assistants, internal tools with role-based access) are easily solvable by putting any standard auth layer (OAuth, JWT, API keys, IAM) in front of the MCP server and mapping authenticated identities to distinct namespaces. The hooks are there; the policy is wired up by the deployment. Keeping the storage engine auth-free means users who never need auth do not pay the cost of an unused feature.
 
-**A system should only be as complicated as it needs to be.** That principle runs through every design decision in this project: four MCP tools instead of nineteen, one SQLite file instead of a separate vector database, no auth in the storage layer instead of a half-baked role system, no LLM in the search path instead of a generative reasoning step nobody asked for. Add complexity when the workload demands it, not before.
+**A system should only be as complicated as it needs to be.** That principle runs through every design decision in this project: four hot-path MCP tools plus two maintenance tools instead of nineteen, one SQLite file instead of a separate vector database, no auth in the storage layer instead of a half-baked role system, no LLM in the search path instead of a generative reasoning step nobody asked for. Add complexity when the workload demands it, not before.

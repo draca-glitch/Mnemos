@@ -47,7 +47,7 @@ For other MCP clients (Cursor, ChatGPT Desktop, Gemini, etc.), add the equivalen
 }
 ```
 
-Restart your AI client. The 4 memory tools (`memory_store`, `memory_search`, `memory_get`, `memory_update`) plus the schema discovery tool (`memory_list_tags`) will be available.
+Restart your AI client. The 4 hot-path memory tools (`memory_store`, `memory_search`, `memory_get`, `memory_update`) plus the 2 maintenance tools (`memory_bulk_rewrite`, `memory_list_tags`) will be available.
 
 ### Disable Claude's built-in automemory (important if you use Claude)
 
@@ -121,7 +121,7 @@ export MNEMOS_LLM_MODEL=qwen2.5:14b
 # Or use OpenRouter, DigitalOcean Gradient, Together.ai, Groq, Fireworks, etc.
 ```
 
-Without these set, `mnemos consolidate` will skip LLM phases and only run bookkeeping. The core memory features (store/search/get/update) **never require an LLM**. Mnemos itself only uses local CPU models for embeddings and reranking.
+Without these set, `mnemos consolidate` will skip LLM phases and only run bookkeeping. The core memory features (store/search/get/update plus bulk_rewrite/list_tags) **never require an LLM**. Mnemos itself only uses local CPU models for embeddings and reranking.
 
 ### Per-phase model routing
 
@@ -241,6 +241,6 @@ for doc in your_bulk_source:
     )
 ```
 
-This is exactly how I run Mnemos in production: a single SQLite store for curated memories plus several Qdrant collections for bulk indexed mail, project documents, personal notes, ebooks, and work files (8 collections, ~500K vectors total). All searched through the same Mnemos retrieval pipeline (BM25 + vector + RRF + cross-encoder), all from the same 4 MCP tools, all CPU-only.
+This is exactly how I run Mnemos in production: a single SQLite store for curated memories plus several Qdrant collections for bulk indexed mail, project documents, personal notes, ebooks, and work files (8 collections, ~500K vectors total). All searched through the same Mnemos retrieval pipeline (BM25 + vector + RRF + cross-encoder), all from the same 4 hot-path MCP tools, all CPU-only.
 
 **Mnemos is not just a memory system. It is a unified, local, CPU-only semantic retrieval layer for everything you own that has text in it.**

@@ -1,5 +1,6 @@
 """
-Mnemos MCP server: exposes 4 tools (store, search, get, update) over JSON-RPC.
+Mnemos MCP server: exposes 6 tools over JSON-RPC
+(hot: store, search, get, update; maintenance: bulk_rewrite, list_tags).
 
 Protocol: newline-delimited JSON-RPC 2.0 over stdin/stdout.
 Methods: initialize, notifications/initialized, tools/list, tools/call.

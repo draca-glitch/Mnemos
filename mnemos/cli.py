@@ -1,5 +1,6 @@
 """
-Mnemos CLI: store/search/get/update/stats from the command line.
+Mnemos CLI: store/search/get/update/stats plus bulk_rewrite/list_tags
+maintenance from the command line.
 
 Usage:
     mnemos add --project dev "F:Mnemos uses sqlite-vec"

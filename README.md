@@ -11,7 +11,7 @@
 
 **Runs on any computer. Works with any AI.**
 
-A local, CPU-only memory store for Claude Code, Cursor, ChatGPT Desktop, Gemini, or any MCP-compatible AI client. Hybrid retrieval (BM25 + vectors + cross-encoder rerank), no LLM in the search path, four MCP tools, one SQLite file by default.
+A local, CPU-only memory store for Claude Code, Cursor, ChatGPT Desktop, Gemini, or any MCP-compatible AI client. Hybrid retrieval (BM25 + vectors + cross-encoder rerank), no LLM in the search path, four hot-path MCP tools (plus two maintenance tools), one SQLite file by default.
 
 ## Quick install
 
@@ -36,7 +36,7 @@ claude mcp add -s user mnemos $(pwd)/venv/bin/mnemos serve
 { "autoMemoryEnabled": false }
 ```
 
-Restart your AI client. The 4 MCP tools (`memory_store`, `memory_search`, `memory_get`, `memory_update`) are now available and the agent knows how to use them.
+Restart your AI client. The 6 MCP tools (four hot-path: `memory_store`, `memory_search`, `memory_get`, `memory_update`; two maintenance: `memory_bulk_rewrite`, `memory_list_tags`) are now available and the agent knows how to use them.
 
 For other clients (Cursor, ChatGPT Desktop, Gemini), CLI usage, hooks, and the optional Nyx consolidation cycle, see [docs/usage.md](docs/usage.md). Full five-minute walkthrough in [QUICKSTART.md](QUICKSTART.md).
 
@@ -58,7 +58,9 @@ Same pipeline runs against three public benchmarks:
 
 **Every configuration is published, including the one where Mnemos looks worst** (`hybrid --cml` drops R@1 on single-session-preference to 53.33% without the reranker to rescue it). Every run is first-run, no parameter tuning, no preprocessing of test data, no LLM in the retrieval path. Result JSON files with timestamps live in [`benchmarks/`](benchmarks/) so anyone can verify the numbers. Per-mode methodology, the full number tables, comparison against MemPalace and the wider field, end-to-end QA, and consolidation-quality numbers in [docs/benchmarks.md](docs/benchmarks.md) and [docs/comparison.md](docs/comparison.md).
 
-## The 4 MCP tools
+## The 6 MCP tools
+
+Hot path (four, used on every session):
 
 ```python
 memory_store(project, content, tags?, importance?, type?, subcategory?,
@@ -69,7 +71,15 @@ memory_get(id)
 memory_update(id, [any field])
 ```
 
-That's the entire surface: CRUD plus search. Hierarchy is metadata (project / subcategory columns), not architecture. Filters, validity windows, and search modes are parameters on `memory_search`, not new tools. Why this matters in [docs/philosophy.md](docs/philosophy.md#why-4-tools-and-not-45).
+Maintenance (two, used rarely):
+
+```python
+memory_bulk_rewrite(pattern, replacement, use_regex?, project?, tags?,
+                    dry_run?, max_affected?)
+memory_list_tags(project?, limit?, min_count?)
+```
+
+That is the entire surface: CRUD-plus-search on the hot path, pattern rewrite and schema introspection on the maintenance path. Hierarchy is metadata (project / subcategory columns), not architecture. Filters, validity windows, and search modes are parameters on `memory_search`, not new tools. Why this matters in [docs/philosophy.md](docs/philosophy.md#why-4-hot-path-tools-and-not-45).
 
 ## Architecture (visual summary)
 
@@ -83,8 +93,8 @@ That's the entire surface: CRUD plus search. Hierarchy is metadata (project / su
                          ┌────────▼────────┐
                          │  Mnemos MCP     │
                          │     Server      │
-                         │  (4 CRUD + 1    │
-                         │   schema tool)  │
+                         │  (4 hot-path    │
+                         │  + 2 maint.)    │
                          └────────┬────────┘
                                   │
               ┌───────────────────┼───────────────────┐

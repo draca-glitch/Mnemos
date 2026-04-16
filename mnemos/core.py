@@ -1,5 +1,6 @@
 """
-Mnemos core: orchestration for store/search/get/update operations.
+Mnemos core: orchestration for store/search/get/update hot-path plus
+bulk_rewrite/list_tags maintenance operations.
 
 This module contains the high-level retrieval pipeline:
   - 3-way dedup on store (FTS + CML + vector → cross-encoder rerank)

@@ -15,8 +15,12 @@ Copy this into `~/.claude/CLAUDE.md`, your project's `CLAUDE.md`, `.cursorrules`
 ```markdown
 ## Memory (Mnemos)
 
-You have access to Mnemos via four MCP tools: `memory_store`, `memory_search`,
-`memory_get`, `memory_update`. Use them proactively.
+You have access to Mnemos via six MCP tools. Four are hot-path CRUD used on
+every session: `memory_store`, `memory_search`, `memory_get`, `memory_update`.
+Two are maintenance tools used rarely: `memory_bulk_rewrite` (pattern-based
+find-and-replace across many memories with dry-run preview) and
+`memory_list_tags` (schema introspection for existing tag conventions). Use
+them proactively.
 
 ### When to search
 - At the start of a session, before you start working on a topic, run
@@ -72,8 +76,12 @@ Copy this instead if you set `MNEMOS_CML_MODE=off`:
 ```markdown
 ## Memory (Mnemos)
 
-You have access to Mnemos via four MCP tools: `memory_store`, `memory_search`,
-`memory_get`, `memory_update`. Use them proactively.
+You have access to Mnemos via six MCP tools. Four are hot-path CRUD used on
+every session: `memory_store`, `memory_search`, `memory_get`, `memory_update`.
+Two are maintenance tools used rarely: `memory_bulk_rewrite` (pattern-based
+find-and-replace across many memories with dry-run preview) and
+`memory_list_tags` (schema introspection for existing tag conventions). Use
+them proactively.
 
 ### When to search
 - At the start of a session, before you start working on a topic, run

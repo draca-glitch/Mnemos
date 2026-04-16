@@ -30,7 +30,7 @@ For Cursor, ChatGPT Desktop, Gemini, or any other MCP-compatible client, add the
 }
 ```
 
-Restart the client. Four tools appear: `memory_store`, `memory_search`, `memory_get`, `memory_update`.
+Restart the client. Six tools appear: four hot-path CRUD (`memory_store`, `memory_search`, `memory_get`, `memory_update`) plus two maintenance tools (`memory_bulk_rewrite`, `memory_list_tags`).
 
 **If you use Claude Code**, also disable the built-in automemory so the two systems do not compete:
 
