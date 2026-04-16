@@ -107,6 +107,54 @@ That's the entire surface: CRUD plus search. Hierarchy is metadata (project / su
 
 On the default SQLite backend, everything (content, FTS index, 1024-dim vectors, memory links, Nyx consolidation history) lives in one SQLite file and every write is a single atomic transaction. Full layered architecture, data model schema, retrieval pipeline mechanics, and storage-backend tradeoffs in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Feature reference (hybrid pipeline, model rationale, temporal decay, Nyx phases, contradiction detection, auto-widen, dedup, forgetting) in [docs/features.md](docs/features.md).
 
+## Deployment profiles
+
+Mnemos scales down to a Pi and up to a production server with an LLM budget. Three profiles cover the useful spectrum; pick the one that matches your constraints.
+
+### 1. Edge / Pi-class (sub-1 GB RAM)
+
+```bash
+export MNEMOS_ENABLE_RERANK=0
+export MNEMOS_CONTRADICT_MODE=vec
+```
+
+- **Models loaded**: FastEmbed e5-large only (~600 MB; drops to ~250 MB with `int8` variants)
+- **Search**: FTS5 + vec + RRF merge, no cross-encoder rerank
+- **Contradiction detection**: Tier-1 vec gate only; any close pair flagged as `contradicts`
+- **Nyx consolidation**: bookkeeping phases only (no LLM required), skip merge/weave/synthesis
+- **Good for**: personal memory on constrained hardware, offline-first deployments
+
+### 2. Standard self-hosted (default, no API costs)
+
+```bash
+# Default config — no env vars needed
+```
+
+- **Models loaded**: FastEmbed e5-large (~600 MB) + Jina cross-encoder (~500 MB)
+- **Search**: full hybrid pipeline (FTS5 + vec + RRF + rerank), this is what the 98.1% R@5 benchmark runs on
+- **Contradiction detection**: three-tier with `relates` silent-link zone, no API cost per store
+- **Nyx consolidation**: bookkeeping only unless LLM is added; merge/weave/synthesis stay dormant
+- **Good for**: most users, homelabs, single-server personal deployments
+
+### 3. Full LLM (premium precision, paid API per operation)
+
+```bash
+export MNEMOS_LLM_API_KEY=sk-...
+export MNEMOS_LLM_MODEL=gpt-4o-mini  # or claude-haiku, etc.
+export MNEMOS_CONTRADICT_MODE=llm
+export MNEMOS_RETRIEVAL_LOG=1        # optional: real-query analytics
+export MNEMOS_TOOL_USAGE_LOG=1       # optional: MCP call diagnostics
+```
+
+- **Models loaded**: e5-large + Jina + LLM API (no local LLM weights)
+- **Search**: full hybrid pipeline (unchanged from standard profile)
+- **Contradiction detection**: five-way LLM classification — `contradicts`, `refines`, `evolves`, `relates`, `unrelated`
+- **Nyx consolidation**: all phases run on schedule — merge/weave/synthesize build a model of the user over time
+- **Analytics**: retrieval and tool-usage logs feed autoimprove benchmarks and quality analysis
+- **Good for**: production deployments where memory is a shared agent resource, teams, long-running research systems
+
+The profiles are cumulative, not exclusive: flipping `MNEMOS_LLM_*` on at any point unlocks LLM-dependent features without touching the rest. No "upgrade" migration needed — just env var changes.
+
 ## CML: token-minimal memory format
 
 Mnemos uses **CML (Condensed Memory Language)** as a soft convention for writing memories. CML is not a parser, schema, or compressor; it's a tiny set of prefixes and symbols (`F:`, `D:`, `L:`, `→`, `∵`, `@`, etc.) that lets the writer pack common semantic patterns into the smallest number of tokens that still preserves meaning. Every token stays recognizable English, so FTS5, the bi-encoder, and the cross-encoder all see text they can handle.
