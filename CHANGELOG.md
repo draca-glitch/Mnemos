@@ -20,6 +20,40 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.7] - 2026-04-16 (smarter vec-only snippet fallback)
+
+### Changed
+
+- **Vec-only snippet fallback now does sentence-scored picking** instead
+  of a blind head slice. When a search hit matched via vec similarity but
+  not FTS (so FTS5's `snippet()` returned nothing), the fallback splits
+  content into sentences on `. ! ?` and picks the sentence with the
+  highest substantive-word overlap with the query (stopwords dropped,
+  min token length 3). If no sentence has any matching tokens, falls
+  back to head slice as before. Cheap — no extra embedding calls.
+- Keeps the existing semantics where exact-token matches still go through
+  FTS `snippet()` for BM25-ranked extraction.
+
+### Why this matters
+
+Vec-only hits are by definition the case where FTS didn't match. The old
+head-slice fallback returned the FIRST chars of the content regardless of
+where the semantic match lived. For long consolidated memories with
+multiple sentences on different sub-topics, that was often the least
+relevant part of the content. The sentence-pick beats head slice whenever
+the query has even one substantive word that appears in the content.
+
+### Limits
+
+- Exact token match only. Lemma-insensitive ("consolidation" does not
+  match "consolidates"). Stemming would require adding a dependency;
+  not worth it for this fallback path.
+- Sentence splitter is regex-based (`(?<=[.!?])\s+`), correct for most
+  CML and prose but will split mid-sentence on abbreviations like
+  "U.S." or "e.g.". Good enough for this use case.
+
+---
+
 ## [10.3.6] - 2026-04-16 (multi-hop `include_linked` with cycle detection)
 
 ### Changed

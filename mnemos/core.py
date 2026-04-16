@@ -537,9 +537,10 @@ class Mnemos:
         # Snippet extraction: replace full content with a query-matched window.
         # Caller opts in with snippet_chars; default (None) keeps full content
         # for backward compatibility. Memories that don't match the FTS query
-        # (pure vec hits) fall back to a head slice of the content. The
-        # `snippet` flag on a result indicates its content was actually
-        # modified, not merely that snippet_chars was requested.
+        # (pure vec hits) fall back to a sentence scored by query-word
+        # overlap, then to a head slice if no sentence scores above zero.
+        # The `snippet` flag on a result indicates its content was
+        # actually modified, not merely that snippet_chars was requested.
         if snippet_chars and snippet_chars > 0:
             try:
                 snippet_map = self.store.get_snippets(
@@ -553,8 +554,11 @@ class Mnemos:
                     r["content"] = snippet_map[mid]
                     r["snippet"] = True
                 elif r.get("content") and len(r["content"]) > snippet_chars:
-                    # Fallback for vec-only hits: head slice
-                    r["content"] = r["content"][:snippet_chars] + " …"
+                    # Vec-only hit (no FTS match). Pick the best sentence by
+                    # query-word overlap, else fall back to head slice.
+                    r["content"] = self._vec_fallback_snippet(
+                        r["content"], query, snippet_chars,
+                    )
                     r["snippet"] = True
                 # else: content is already short enough, no modification
                 # — `snippet` flag is not set
@@ -735,6 +739,72 @@ class Mnemos:
 
     def stats(self) -> dict:
         return self.store.stats()
+
+    # Stop words for query-token extraction when scoring vec-only snippet
+    # fallback. Tiny list — we want to keep "python", "vec", etc. but drop
+    # noise like "the", "is", "and". Not a full stopword lexicon on purpose:
+    # this runs inline per-hit, cost matters more than perfect recall.
+    _SNIPPET_STOPWORDS = frozenset([
+        "the", "a", "an", "is", "are", "was", "were", "be", "been",
+        "and", "or", "but", "if", "of", "in", "on", "to", "for",
+        "with", "at", "by", "from", "as", "this", "that", "these",
+        "those", "i", "you", "we", "they", "it", "its",
+        "how", "what", "when", "where", "why", "who",
+        "do", "does", "did", "can", "could", "should", "would",
+    ])
+
+    @classmethod
+    def _vec_fallback_snippet(cls, content: str, query: str, chars: int) -> str:
+        """Pick the best sentence in `content` by query-word overlap.
+
+        Used when a search hit matched via vec similarity but NOT FTS, so
+        the FTS `snippet()` call returned nothing useful. Splitting into
+        sentences and scoring by substantive-word overlap is cheap (no
+        extra embedding calls) and usually beats a head slice: even when
+        the query terms aren't lexically identical to the content, common
+        informative words often overlap enough to identify the best
+        sentence.
+
+        Falls back to head slice when no sentence scores above zero
+        (e.g., query terms are semantically present but lexically absent).
+        """
+        if not content:
+            return ""
+        # Extract substantive query words (lowercased, stopwords dropped,
+        # length >= 3 to skip short tokens that add noise).
+        import re
+        q_tokens = {
+            t for t in re.findall(r"\w+", query.lower())
+            if len(t) >= 3 and t not in cls._SNIPPET_STOPWORDS
+        }
+        if not q_tokens:
+            return content[:chars] + (" …" if len(content) > chars else "")
+
+        # Sentence split on . ! ? (preserve sentence content; skip split
+        # inside abbreviations via a simple heuristic: require space after
+        # the punctuation). Good enough for CML / prose content.
+        sentences = re.split(r"(?<=[.!?])\s+", content.strip())
+        if not sentences:
+            return content[:chars] + " …"
+
+        best_sentence = sentences[0]
+        best_score = 0
+        for s in sentences:
+            s_tokens = set(re.findall(r"\w+", s.lower()))
+            score = len(q_tokens & s_tokens)
+            if score > best_score:
+                best_score = score
+                best_sentence = s
+
+        if best_score == 0:
+            # No token overlap anywhere; return head slice
+            return content[:chars] + " …"
+
+        # Truncate the winning sentence if it's still too long, or pad
+        # with adjacent context up to the budget.
+        if len(best_sentence) <= chars:
+            return best_sentence
+        return best_sentence[:chars] + " …"
 
     @staticmethod
     def _match_snippet(text: str, anchor: str, chars: int = 120) -> str:
