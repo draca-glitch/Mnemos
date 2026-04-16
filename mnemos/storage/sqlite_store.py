@@ -125,7 +125,37 @@ class SQLiteStore(MnemosStore):
                 nyx_processed TEXT DEFAULT NULL
             )
         """)
-        # Indexes
+        # Pre-v10 DBs may predate columns that v10.x adds (notably namespace
+        # and nyx_processed). CREATE TABLE IF NOT EXISTS is idempotent but
+        # doesn't ALTER an existing schema, so we explicitly patch missing
+        # columns before any CREATE INDEX that might reference them. Without
+        # this, pointing Mnemos at an older DB threw "no such column:
+        # namespace" at the first index create — a cryptic first-run failure
+        # that's now a silent migration.
+        existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
+        _column_backfills = [
+            ("namespace",         "TEXT NOT NULL DEFAULT 'default'"),
+            ("nyx_processed",     "TEXT DEFAULT NULL"),
+            ("subcategory",       "TEXT DEFAULT NULL"),
+            ("valid_from",        "TEXT DEFAULT NULL"),
+            ("valid_until",       "TEXT DEFAULT NULL"),
+            ("layer",             "TEXT DEFAULT 'semantic'"),
+            ("consolidation_lock", "INTEGER DEFAULT 0"),
+            ("verified",          "INTEGER DEFAULT 0"),
+            ("last_confirmed",    "TEXT DEFAULT NULL"),
+        ]
+        for col, coldef in _column_backfills:
+            if col not in existing_cols:
+                try:
+                    conn.execute(f"ALTER TABLE memories ADD COLUMN {col} {coldef}")
+                except Exception:
+                    # ALTER ADD COLUMN can fail on exotic cases (e.g. a
+                    # NOT NULL DEFAULT on a table with a trigger); log
+                    # and press on — the index below will throw with a
+                    # clearer error if the column truly didn't land.
+                    pass
+        # Indexes (only created after the backfill pass above so older DBs
+        # don't trip on a missing column reference)
         for idx_sql in [
             "CREATE INDEX IF NOT EXISTS idx_mem_namespace ON memories(namespace)",
             "CREATE INDEX IF NOT EXISTS idx_mem_project ON memories(project)",

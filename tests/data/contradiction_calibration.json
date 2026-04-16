@@ -1,0 +1,184 @@
+{
+  "description": "Synthetic calibration dataset for three-tier contradiction detection (v10.3.0+). Each pair has an expected classification under the `mode=llm` ladder: contradicts / refines / evolves / relates / unrelated. Pairs are grouped by expected class so precision/recall per class can be computed.",
+  "schema_note": "Pairs are stored as {id, project, content_a, content_b, expected, rationale}. `expected` must be one of the 5 classes. `project` is the same for both entries (contradiction detection is same-project-only at Tier 1).",
+  "generated_at": "2026-04-16",
+  "source": "Synthetic, hand-crafted to exercise each classification branch. Not drawn from real user memory; no PII.",
+
+  "contradicts": [
+    {
+      "id": "c1",
+      "project": "dev",
+      "content_a": "F: Production database is PostgreSQL 15 on primary server.",
+      "content_b": "F: Production database is MySQL 8.0 on primary server.",
+      "rationale": "Same subject (production DB on primary), directly opposite specific fact."
+    },
+    {
+      "id": "c2",
+      "project": "personal",
+      "content_a": "F: Luna the cat is allergic to tuna and must never eat it.",
+      "content_b": "F: Luna eats tuna daily with no issues.",
+      "rationale": "Same entity, directly conflicting claims about allergy."
+    },
+    {
+      "id": "c3",
+      "project": "work",
+      "content_a": "D: Launching product X on 2026-05-01 as the committed date.",
+      "content_b": "D: Launch of product X cancelled, no ship date planned.",
+      "rationale": "Same decision subject, active-vs-cancelled opposition."
+    },
+    {
+      "id": "c4",
+      "project": "finance",
+      "content_a": "F: Cash reserves are 50000 USD as of end of Q1.",
+      "content_b": "F: Cash reserves are 5000 USD as of end of Q1.",
+      "rationale": "Same time period, same metric, order-of-magnitude conflict."
+    },
+    {
+      "id": "c5",
+      "project": "health",
+      "content_a": "F: Resting heart rate averages 55 bpm.",
+      "content_b": "F: Resting heart rate averages 85 bpm.",
+      "rationale": "Same vitals measurement, non-overlapping ranges."
+    },
+    {
+      "id": "c6",
+      "project": "dev",
+      "content_a": "F: Redis is the sole caching layer; no Memcached in use.",
+      "content_b": "F: Memcached is the sole caching layer; Redis was removed.",
+      "rationale": "Mutually exclusive architectural claims."
+    }
+  ],
+
+  "refines": [
+    {
+      "id": "r1",
+      "project": "dev",
+      "content_a": "F: The API rate limit is 100 requests per minute.",
+      "content_b": "F: The API rate limit is 100 requests per minute per IP address, with a burst allowance of 150 in any 10-second window.",
+      "rationale": "B extends A with more precise detail; does not contradict."
+    },
+    {
+      "id": "r2",
+      "project": "personal",
+      "content_a": "F: I prefer dark chocolate.",
+      "content_b": "F: I prefer dark chocolate, specifically 70-85% cacao and ideally single-origin Ecuadorian.",
+      "rationale": "Same preference, B adds specificity."
+    },
+    {
+      "id": "r3",
+      "project": "work",
+      "content_a": "D: Adopt Kubernetes for container orchestration.",
+      "content_b": "D: Adopt Kubernetes for container orchestration, using EKS on AWS with separate node groups for stateful and stateless workloads.",
+      "rationale": "Same decision, B provides implementation detail."
+    },
+    {
+      "id": "r4",
+      "project": "health",
+      "content_a": "F: Morning workout is running.",
+      "content_b": "F: Morning workout is a 5km Zone 2 run at 6:30 am, three times per week.",
+      "rationale": "B replaces A's summary with concrete structure."
+    }
+  ],
+
+  "evolves": [
+    {
+      "id": "e1",
+      "project": "work",
+      "content_a": "F: Working at Acme Corp as senior engineer, started 2022-03.",
+      "content_b": "F: Started new role at Globex as staff engineer, 2024-06, left Acme.",
+      "rationale": "Temporal progression: job transition, A's fact is now historical."
+    },
+    {
+      "id": "e2",
+      "project": "personal",
+      "content_a": "F: Living in Stockholm as of 2023.",
+      "content_b": "F: Moved to Gothenburg in September 2025.",
+      "rationale": "Location change over time; A was true, B is now true."
+    },
+    {
+      "id": "e3",
+      "project": "health",
+      "content_a": "F: Current weight 82kg (March 2025).",
+      "content_b": "F: Current weight 76kg (November 2025), down 6kg over 8 months.",
+      "rationale": "Same metric, later measurement supersedes earlier."
+    },
+    {
+      "id": "e4",
+      "project": "dev",
+      "content_a": "F: Python 3.11 is the project runtime.",
+      "content_b": "F: Upgraded project to Python 3.12 on 2026-01-15.",
+      "rationale": "Version bump, explicit temporal marker."
+    }
+  ],
+
+  "relates": [
+    {
+      "id": "rel1",
+      "project": "personal",
+      "content_a": "L: Submissiveness in partners was functioning as a proxy for reliable caring, given the caregiving deficit in prior relationships.",
+      "content_b": "L: There's also a genuine erotic component to preferring submissive partners, independent of the caring-proxy explanation.",
+      "rationale": "THE CANONICAL FALSE POSITIVE from 2026-04-15 night. Same topic (dominance/submissiveness), complementary not conflicting insights. v10.2.x flagged as contradicts (sim=0.58); v10.3.0 rerank-mode should classify as relates."
+    },
+    {
+      "id": "rel2",
+      "project": "dev",
+      "content_a": "F: Postgres handles writes on the primary; read queries go to replicas.",
+      "content_b": "F: The app uses connection pooling with PgBouncer in transaction mode.",
+      "rationale": "Same general topic (Postgres setup), complementary aspects (replication vs pooling)."
+    },
+    {
+      "id": "rel3",
+      "project": "food",
+      "content_a": "F: Dashi is made from kombu and katsuobushi simmered briefly.",
+      "content_b": "F: Miso soup uses white miso for lighter profile, red miso for richer umami.",
+      "rationale": "Same domain (Japanese cooking), complementary facts on different dishes."
+    },
+    {
+      "id": "rel4",
+      "project": "work",
+      "content_a": "D: Weekly 1:1 with manager on Tuesdays at 14:00.",
+      "content_b": "D: Team retrospective on Friday afternoons, alternating weeks.",
+      "rationale": "Same context (recurring meetings), no conflict."
+    },
+    {
+      "id": "rel5",
+      "project": "personal",
+      "content_a": "F: Morning routine includes espresso and journaling.",
+      "content_b": "F: Evening routine includes reading for 30 minutes before sleep.",
+      "rationale": "Same theme (daily routines), different time slots, complementary."
+    },
+    {
+      "id": "rel6",
+      "project": "dev",
+      "content_a": "F: CI runs on GitHub Actions, pipeline takes about 4 minutes.",
+      "content_b": "F: Test suite has 340 unit tests plus 40 integration tests.",
+      "rationale": "Same project infrastructure, different aspects (runner vs coverage)."
+    }
+  ],
+
+  "unrelated": [
+    {
+      "id": "u1",
+      "project": "general",
+      "content_a": "F: Favorite apple variety is Honeycrisp.",
+      "content_b": "F: Apple Inc. stock ticker is AAPL on NASDAQ.",
+      "rationale": "Surface lexical overlap (apple), completely different domains."
+    },
+    {
+      "id": "u2",
+      "project": "dev",
+      "content_a": "F: Python uses duck typing for polymorphism.",
+      "content_b": "F: Duck confit recipe requires 12 hours of slow cooking in fat.",
+      "rationale": "Lexical overlap only; no semantic connection."
+    },
+    {
+      "id": "u3",
+      "project": "personal",
+      "content_a": "F: Swimming goggles Speedo Vanquisher 2.0.",
+      "content_b": "F: Friend Mårten lives in Växjö.",
+      "rationale": "Different topics entirely, might surface together in broad vec neighborhood."
+    }
+  ],
+
+  "usage_hint": "For benchmarking: seed each content_a + content_b into a test Mnemos instance, then re-insert content_b (or a fresh copy) and inspect the returned classifications. Compute precision/recall per class. Target: zero contradicts classifications on the `relates` set (the main v10.2.x false-positive fix), and full recall on the `contradicts` set."
+}

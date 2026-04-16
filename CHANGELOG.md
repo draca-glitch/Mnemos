@@ -20,6 +20,32 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.4] - 2026-04-16 (graceful init_schema on pre-v10 DBs + calibration dataset)
+
+### Fixed
+
+- **`SQLiteStore.init_schema` now backfills missing columns on pre-v10 DBs**
+  before creating any index that references them. Previously, pointing
+  Mnemos at a DB that predated v10.x (typically missing the `namespace`
+  column) threw "no such column: namespace" on the first CREATE INDEX.
+  Now the init pass runs ALTER TABLE ADD COLUMN for any of
+  `namespace` / `nyx_processed` / `subcategory` / `valid_from` /
+  `valid_until` / `layer` / `consolidation_lock` / `verified` /
+  `last_confirmed` that are absent, using the documented defaults. Silent
+  migration, no data loss, idempotent (existing columns skipped).
+
+### Added
+
+- **Calibration dataset for contradiction classification**
+  (`tests/data/contradiction_calibration.json`). Hand-crafted synthetic
+  pairs grouped by expected class: 6 `contradicts`, 4 `refines`,
+  4 `evolves`, 6 `relates`, 3 `unrelated`. Includes the canonical
+  v10.2.x false-positive case (two dominance insights, complementary
+  not conflicting) as the `relates` calibration anchor. No PII, no
+  real user memories.
+
+---
+
 ## [10.3.3] - 2026-04-16 (revert graceful degrade; state rerank as required)
 
 ### Changed
