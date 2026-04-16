@@ -141,6 +141,31 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "memory_bulk_rewrite",
+        "description": (
+            "Find-and-replace across memories in one call. Default dry_run=true returns a preview "
+            "(matched count, affected count, per-memory before/after snippets) without touching the DB. "
+            "Set dry_run=false to commit. max_affected caps the operation: if more memories would "
+            "change than the cap, the call errors out without writing anything (prevents runaway "
+            "rewrites). Re-embeds every modified memory. Namespace-scoped, active-only. "
+            "Use_regex=true switches from plain substring to Python regex syntax."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Substring (default) or regex (if use_regex=true) to find"},
+                "replacement": {"type": "string", "description": "Text to replace with. Empty string allowed for deletion."},
+                "project": {"type": "string", "description": "Optional: only rewrite memories in this project"},
+                "tags": {"type": "string", "description": "Optional: only rewrite memories whose tags contain this substring"},
+                "dry_run": {"type": "boolean", "default": True, "description": "If true (default), return preview without writing. If false, commit."},
+                "max_affected": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500, "description": "Abort without writing if more memories would change than this"},
+                "use_regex": {"type": "boolean", "default": False, "description": "Treat pattern as Python regex instead of plain substring"},
+                "preview_chars": {"type": "integer", "default": 120, "minimum": 40, "maximum": 500, "description": "Chars of context around each match in the preview"},
+            },
+            "required": ["pattern", "replacement"],
+        },
+    },
+    {
         "name": "memory_list_tags",
         "description": "Discover existing tag conventions. Returns unique tags with usage counts and an example memory ID per tag, so callers can reuse established tag names instead of creating drifted duplicates.",
         "inputSchema": {
@@ -220,6 +245,19 @@ def tool_search(mnemos, params):
     )
 
 
+def tool_bulk_rewrite(mnemos, params):
+    return mnemos.bulk_rewrite(
+        pattern=params.get("pattern", ""),
+        replacement=params.get("replacement", ""),
+        project=params.get("project"),
+        tags=params.get("tags"),
+        dry_run=params.get("dry_run", True),
+        max_affected=params.get("max_affected", 50),
+        use_regex=params.get("use_regex", False),
+        preview_chars=params.get("preview_chars", 120),
+    )
+
+
 def tool_list_tags(mnemos, params):
     return {
         "tags": mnemos.list_tags(
@@ -252,6 +290,7 @@ TOOL_DISPATCH = {
     "memory_get": tool_get,
     "memory_update": tool_update,
     "memory_list_tags": tool_list_tags,
+    "memory_bulk_rewrite": tool_bulk_rewrite,
 }
 
 
@@ -291,7 +330,7 @@ def main():
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "mnemos", "version": "10.2.2"},
+                    "serverInfo": {"name": "mnemos", "version": "10.2.3"},
                 },
             })
             # Warm up the embedder so first search is instant

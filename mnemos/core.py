@@ -570,6 +570,139 @@ class Mnemos:
     def stats(self) -> dict:
         return self.store.stats()
 
+    @staticmethod
+    def _match_snippet(text: str, anchor: str, chars: int = 120) -> str:
+        """Extract a window of approximately `chars` centered on the first
+        occurrence of `anchor` in `text`. Falls back to head slice if the
+        anchor isn't present (anchor text may have been replaced away).
+        """
+        if not text:
+            return ""
+        idx = text.find(anchor) if anchor else -1
+        if idx < 0:
+            return text[:chars] + (" …" if len(text) > chars else "")
+        half = max(chars // 2, 40)
+        start = max(0, idx - half)
+        end = min(len(text), idx + len(anchor) + half)
+        prefix = "… " if start > 0 else ""
+        suffix = " …" if end < len(text) else ""
+        return prefix + text[start:end] + suffix
+
+    def bulk_rewrite(self, pattern: str, replacement: str,
+                     project: Optional[str] = None,
+                     tags: Optional[str] = None,
+                     dry_run: bool = True,
+                     max_affected: int = 50,
+                     use_regex: bool = False,
+                     preview_chars: int = 120) -> dict:
+        """Find-and-replace across memories with preview-commit flow.
+
+        Safety invariants:
+          - dry_run=True by default: returns preview without writing
+          - max_affected cap: aborts before any write if exceeded
+          - namespace-scoped: only matches memories in self.namespace
+          - active-only: archived memories excluded
+          - re-embeds every modified memory (content changed → embedding
+            must too, else vector search drifts from truth)
+
+        Returns dict with keys: matched, affected, changes, dry_run,
+        optional error. Each change has {id, before, after, diff_chars}
+        where before/after are snippets around the match site.
+        """
+        if not pattern:
+            return {"error": "pattern is required", "matched": 0,
+                    "affected": 0, "changes": [], "dry_run": dry_run}
+        if not hasattr(self.store, "_get_conn"):
+            return {"error": "bulk_rewrite only supported on SQLite-based stores",
+                    "matched": 0, "affected": 0, "changes": [],
+                    "dry_run": dry_run}
+
+        import re
+        regex = None
+        if use_regex:
+            try:
+                regex = re.compile(pattern)
+            except re.error as e:
+                return {"error": f"invalid regex: {e}", "matched": 0,
+                        "affected": 0, "changes": [], "dry_run": dry_run}
+
+        conn = self.store._get_conn()
+        where = "status = 'active' AND namespace = ?"
+        params: list = [self.namespace]
+        if project:
+            where += " AND project = ?"
+            params.append(project)
+        if tags:
+            where += " AND tags LIKE ?"
+            params.append(f"%{tags}%")
+
+        if use_regex:
+            rows = conn.execute(
+                f"SELECT id, content FROM memories WHERE {where}", params,
+            ).fetchall()
+            matches = [(r["id"], r["content"]) for r in rows
+                       if regex.search(r["content"] or "")]
+        else:
+            rows = conn.execute(
+                f"SELECT id, content FROM memories WHERE {where} AND content LIKE ?",
+                params + [f"%{pattern}%"],
+            ).fetchall()
+            matches = [(r["id"], r["content"]) for r in rows]
+
+        # Compute actual changes (filter out no-op rewrites where pattern
+        # matched but replacement was identical, e.g. idempotent rerun)
+        changes = []
+        for mid, content in matches:
+            if use_regex:
+                new_content = regex.sub(replacement, content or "")
+            else:
+                new_content = (content or "").replace(pattern, replacement)
+            if new_content == content:
+                continue
+            changes.append({
+                "id": mid,
+                "_new_content": new_content,
+                "before": self._match_snippet(
+                    content or "", pattern if not use_regex else "",
+                    preview_chars,
+                ),
+                "after": self._match_snippet(
+                    new_content, replacement, preview_chars,
+                ),
+                "diff_chars": len(new_content) - len(content or ""),
+            })
+
+        if len(changes) > max_affected:
+            return {
+                "error": (
+                    f"Would modify {len(changes)} memories, exceeds "
+                    f"max_affected={max_affected}. Tighten filters or "
+                    f"raise max_affected explicitly."
+                ),
+                "matched": len(matches),
+                "affected": 0,
+                "changes": [],
+                "dry_run": dry_run,
+            }
+
+        affected = 0
+        if not dry_run:
+            for change in changes:
+                ok = self.update(change["id"], content=change["_new_content"])
+                if isinstance(ok, dict) and ok.get("status") == "updated":
+                    affected += 1
+
+        # Strip internal field before returning
+        for change in changes:
+            change.pop("_new_content", None)
+
+        return {
+            "matched": len(matches),
+            "affected": affected if not dry_run else len(changes),
+            "changes": changes,
+            "dry_run": dry_run,
+        }
+
     def list_tags(self, project=None, min_count=1, order_by="count",
                   limit=500) -> list:
         """List unique tags across active memories with usage counts.

@@ -20,6 +20,63 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.2.3] - 2026-04-16 (memory_bulk_rewrite: find-and-replace across memories)
+
+### Added
+
+- **`memory_bulk_rewrite` MCP tool** (6th tool). Find-and-replace across
+  memories with a preview-commit flow. Default `dry_run=true` returns per-
+  memory before/after snippets without touching the DB; caller commits
+  with `dry_run=false`. `max_affected` cap aborts before any write if
+  the pattern would modify more memories than allowed — prevents runaway
+  rewrites. Re-embeds every modified memory (content changed means
+  embedding must change too). Supports both plain substring (default)
+  and Python regex (via `use_regex=true`). Namespace-scoped, active-only.
+
+  Real-world motivation: last night's cleanup required rewriting "Monica"
+  to "Madoka" across 6 consolidated memories. That took ~30 round-trips
+  of get+update. This tool collapses the same operation into one call
+  with a dry-run preview before commit.
+
+  Why 6 tools now: still 4 CRUD (`memory_store`, `memory_search`,
+  `memory_get`, `memory_update`) + 1 schema-discovery (`memory_list_tags`)
+  + 1 batch-operation (`memory_bulk_rewrite`). Bulk rewrite is a
+  distinct operation category — not CRUD (doesn't operate on a single
+  memory or return search results), not schema discovery (mutates
+  content). The "4 tools and not 45" principle holds: each tool here
+  represents an operation category that cannot be collapsed into an
+  existing tool's parameter.
+
+### Safety invariants (contract)
+
+- `dry_run=True` is the default. A caller who omits the flag gets a
+  preview, not a write.
+- `max_affected` defaults to 50. Exceeded → error returned, zero writes.
+- Namespace isolation enforced at the SQL level (WHERE namespace = ?).
+- Archived memories excluded (WHERE status = 'active').
+- Re-embedding runs via `Mnemos.update()`, which also updates the FTS
+  index. No silent drift between stored content and its search
+  representation.
+
+### API
+
+```python
+mnemos.bulk_rewrite(
+    pattern,            # substring or regex
+    replacement,
+    project=None,       # optional scope
+    tags=None,          # optional scope
+    dry_run=True,
+    max_affected=50,
+    use_regex=False,
+    preview_chars=120,
+)
+# Returns: {matched, affected, changes[{id,before,after,diff_chars}],
+#           dry_run, error?}
+```
+
+---
+
 ## [10.2.2] - 2026-04-16 (opt-in tool_usage logging)
 
 ### Added
