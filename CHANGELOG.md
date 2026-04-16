@@ -20,6 +20,45 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.3.1] - 2026-04-16 (stop-hook session summary + decay audit)
+
+### Added
+
+- **Reference stop-hook session summary** (opt-in via `MNEMOS_STOP_SUMMARY=1`).
+  When enabled, the reference `scripts/mnemos-session-hook.sh` writes one
+  episodic memory at session end containing session metadata: session id,
+  timestamp, working directory, assistant turn count, tool-call breakdown
+  by name, first/last user prompt snippets. Purely structural extraction
+  via `jq` on `CLAUDE_TRANSCRIPT` — no LLM call. Next session's briefing
+  picks up the summary by recency, giving cross-session continuity
+  without violating the "in-session LLM is authoritative" principle.
+
+- **Optional stop-hook nag** via `MNEMOS_STOP_NAG=1` for callers who want
+  a "session was long but stored nothing" reminder. Also opt-in, also
+  non-LLM.
+
+Both defaults remain off. If a session consistently ends without useful
+stores, the correct fix is in-session prompting (CLAUDE.md rules, tool
+descriptions), not a bolted-on pipeline. These hooks are escape hatches.
+
+### Verified (no code change, but worth documenting)
+
+- **Decay math** matches the `~46d/~180d` half-life claim advertised in
+  docs. `DECAY_RATE=0.015` (ln(2)/46 ≈ 0.015) gives episodic half-life
+  of 46.2 days; `DECAY_RATE_SEMANTIC=0.00385` (ln(2)/180 ≈ 0.00385) gives
+  semantic half-life of 180 days. Applied at query time in the ranking
+  expression, not as a destructive rewrite.
+- **Two complementary decay mechanisms** exist and both work as expected:
+  1. Query-time exponential boost decay (in the ranking SQL), governs
+     search result ordering
+  2. Write-time `access_count` decay (-1 per week of inactivity) in the
+     Nyx cycle bookkeeping phase, prevents stale access counts from
+     inflating importance forever
+- **Last Nyx run** confirmed via `consolidation_log` audit trail
+  (v10.2.1 feature now useful for exactly this kind of audit).
+
+---
+
 ## [10.3.0] - 2026-04-16 (three-tier contradiction detection with `relates` link)
 
 ### Why this matters

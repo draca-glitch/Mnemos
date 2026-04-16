@@ -101,12 +101,66 @@ case "${1:-start}" in
         ;;
 
     stop)
-        # Deliberately simple: no LLM call at stop-time. The in-session
-        # LLM is authoritative for memory decisions. If you want the
-        # classic "you had a long session and stored nothing" nag, wire
-        # that here using transcript parsing (jq over CLAUDE_TRANSCRIPT)
-        # — no LLM required.
-        :
+        # Two optional behaviours, both transcript-based, no LLM:
+        #   1. Nag if session was long but stored nothing (opt-in:
+        #      MNEMOS_STOP_NAG=1). Dumb signal, no content inspection.
+        #   2. Mechanical session summary as an episodic memory
+        #      (opt-in: MNEMOS_STOP_SUMMARY=1). Stores session_id,
+        #      duration-ish, tool call breakdown, first/last user
+        #      prompt snippets. Purely structural extraction — does
+        #      NOT call an LLM. Next session's briefing picks up the
+        #      summary by recency, giving cross-session continuity.
+        #
+        # Both default off to honor the guiding principle (in-session
+        # LLM is authoritative for memory decisions). If a session
+        # regularly ends without worthwhile stores, the correct fix is
+        # in-session prompting — see CLAUDE.md rules. These hooks are
+        # escape hatches, not primary pipelines.
+        if [ -z "${CLAUDE_TRANSCRIPT:-}" ] || [ ! -f "${CLAUDE_TRANSCRIPT:-}" ]; then
+            exit 0
+        fi
+
+        TURNS=$(jq -r 'select(.type == "assistant") | .type' "$CLAUDE_TRANSCRIPT" 2>/dev/null | wc -l)
+        STORES=$(jq -r '
+            select(.type == "assistant")
+            | .message.content[]?
+            | select(.type == "tool_use" and (.name | test("memory_store")))
+            | .name
+        ' "$CLAUDE_TRANSCRIPT" 2>/dev/null | wc -l)
+
+        if [ "${MNEMOS_STOP_NAG:-0}" = "1" ] && [ "$TURNS" -ge 10 ] && [ "$STORES" -eq 0 ] 2>/dev/null; then
+            echo "Reminder: session had ${TURNS} turns with no memory_store calls. Consider storing learnings."
+        fi
+
+        if [ "${MNEMOS_STOP_SUMMARY:-0}" != "1" ] || [ "$TURNS" -lt 3 ] 2>/dev/null; then
+            exit 0
+        fi
+
+        SID="${CLAUDE_SESSION_ID:-unknown}"
+        NOW=$(date '+%Y-%m-%d %H:%M')
+        TOOL_BREAKDOWN=$(jq -r '
+            select(.type == "assistant")
+            | .message.content[]?
+            | select(.type == "tool_use")
+            | .name
+        ' "$CLAUDE_TRANSCRIPT" 2>/dev/null | sort | uniq -c | sort -rn | awk '{printf "%s=%d ", $2, $1}')
+
+        FIRST_USER=$(jq -r '
+            select(.type == "user") | .message.content[]?
+            | select(.type == "text" or type == "string")
+            | if type == "object" then .text else . end
+        ' "$CLAUDE_TRANSCRIPT" 2>/dev/null | head -1 | cut -c1-120)
+        LAST_USER=$(jq -r '
+            select(.type == "user") | .message.content[]?
+            | select(.type == "text" or type == "string")
+            | if type == "object" then .text else . end
+        ' "$CLAUDE_TRANSCRIPT" 2>/dev/null | tail -1 | cut -c1-120)
+
+        SUMMARY="F: Session ${SID:0:8} @ ${NOW} in ${PWD:-?}: ${TURNS} assistant turns, tools: ${TOOL_BREAKDOWN}| first: ${FIRST_USER} | last: ${LAST_USER}"
+
+        "$MNEMOS_BIN" add --project general --type fact \
+            --tags "session-summary,auto-hook,src:stop-hook" \
+            --content "$SUMMARY" >/dev/null 2>&1 || true
         ;;
 
     *)
