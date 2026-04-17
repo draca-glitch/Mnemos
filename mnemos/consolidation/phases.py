@@ -56,9 +56,20 @@ def fastembed_embed(texts, prefix="passage"):
     return fastembed_embed_raw(texts, prefix=prefix)
 
 
+def _vec_join_col(conn):
+    """Detect whether embed_vec uses 'id' (explicit PK) or 'rowid' (implicit)."""
+    import sqlite3 as _sq
+    try:
+        conn.execute("SELECT id FROM embed_vec LIMIT 0").fetchone()
+        return "id"
+    except _sq.OperationalError:
+        return "rowid"
+
+
 def store_embeddings(conn, tuples, model=None):
     """Bulk-insert embeddings via the SQLite vec extension."""
     import struct as _struct
+    join_col = _vec_join_col(conn)
     for source_db, source_id, thash, embedding in tuples:
         # Remove existing embedding for this source_id
         existing = conn.execute(
@@ -66,7 +77,7 @@ def store_embeddings(conn, tuples, model=None):
             (source_db, source_id),
         ).fetchone()
         if existing:
-            conn.execute("DELETE FROM embed_vec WHERE rowid = ?", (existing[0],))
+            conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (existing[0],))
             conn.execute(
                 "DELETE FROM embed_meta WHERE source_db = ? AND source_id = ?",
                 (source_db, source_id),

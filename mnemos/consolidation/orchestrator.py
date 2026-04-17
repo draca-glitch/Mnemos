@@ -63,6 +63,19 @@ def _migrate_nyx_schema(conn):
 
 # --- Phase 6: Bookkeeping (no LLM required) ---
 
+def _vec_join_col(conn):
+    """Detect whether embed_vec uses 'id' (explicit PK) or 'rowid' (implicit).
+
+    Matches the auto-detection logic in storage/sqlite_store.py so
+    consolidation works against both schemas.
+    """
+    try:
+        conn.execute("SELECT id FROM embed_vec LIMIT 0").fetchone()
+        return "id"
+    except sqlite3.OperationalError:
+        return "rowid"
+
+
 def cleanup_orphan_vectors(conn):
     """Remove vectors for archived/deleted memories."""
     active_ids = {r[0] for r in conn.execute(
@@ -71,10 +84,11 @@ def cleanup_orphan_vectors(conn):
     embedded = conn.execute(
         "SELECT id, source_id FROM embed_meta WHERE source_db = ?", (SOURCE_KEY,)
     ).fetchall()
+    join_col = _vec_join_col(conn)
     removed = 0
     for meta_id, source_id in embedded:
         if source_id not in active_ids:
-            conn.execute("DELETE FROM embed_vec WHERE rowid = ?", (meta_id,))
+            conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta_id,))
             conn.execute("DELETE FROM embed_meta WHERE id = ?", (meta_id,))
             removed += 1
     if removed:
