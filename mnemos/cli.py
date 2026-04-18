@@ -12,10 +12,11 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 
 from .core import Mnemos
-from .constants import VALID_TYPES, VALID_LAYERS
+from .constants import VALID_TYPES, VALID_LAYERS, DEFAULT_NAMESPACE
 
 
 def cmd_add(mnemos, args):
@@ -361,7 +362,11 @@ def main(argv=None):
     p.set_defaults(fn=cmd_serve)
 
     args = parser.parse_args(argv)
-    mnemos = Mnemos()
+    # v10.4.2: honor MNEMOS_NAMESPACE env (the MCP server already does;
+    # without this the CLI silently used DEFAULT_NAMESPACE and reported 0
+    # for every command on a non-default-namespace database).
+    namespace = os.environ.get("MNEMOS_NAMESPACE", DEFAULT_NAMESPACE)
+    mnemos = Mnemos(namespace=namespace)
     try:
         args.fn(mnemos, args)
     finally:

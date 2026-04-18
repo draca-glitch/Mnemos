@@ -20,6 +20,25 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.4.2] - 2026-04-18 (CLI honors MNEMOS_NAMESPACE)
+
+Tiny patch fixing a CLI / MCP-server divergence in env handling.
+
+### Fixed
+
+- **`mnemos` CLI now reads `MNEMOS_NAMESPACE` from the environment.**
+  The MCP server has always honored `MNEMOS_NAMESPACE` (multi-tenant
+  isolation key for the SQLite store), but `cli.py:main()` constructed
+  `Mnemos()` with no arguments, silently falling back to
+  `DEFAULT_NAMESPACE = "default"`. Result: on a database where memories
+  live under a non-default namespace, `mnemos stats` reported 0 / wrong
+  totals, `mnemos search` returned no hits, and the CLI was effectively
+  invisible to the same data the MCP server was serving. CLI now
+  matches the MCP server pattern: `os.environ.get("MNEMOS_NAMESPACE",
+  DEFAULT_NAMESPACE)` at startup.
+
+---
+
 ## [10.4.1] - 2026-04-18 (flush-on-print in consolidation phases)
 
 Tiny patch release fixing a long-standing observability bug.
