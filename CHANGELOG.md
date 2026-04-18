@@ -20,6 +20,25 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.4.1] - 2026-04-18 (flush-on-print in consolidation phases)
+
+Tiny patch release fixing a long-standing observability bug.
+
+### Fixed
+
+- **`print()` calls in `mnemos/consolidation/phases.py` now pass
+  `flush=True`.** Eleven cluster/pair logging lines were buffered when
+  stdout was a pipe (cron mail, `tee`, monitor stream), making long
+  Nyx runs look hung for minutes at a time even though the cycle was
+  making steady progress between flushes. The orchestrator's `log()`
+  helper has always flushed; the per-phase progress prints did not.
+  Discovered when a Phase 2A run on a 700-memory surge appeared to
+  stall after "Found 30 tight clusters" but was in fact merging
+  silently. PYTHONUNBUFFERED=1 worked around it externally; this is
+  the in-package fix.
+
+---
+
 ## [10.4.0] - 2026-04-18 (cemelify-on-import, loud-fail, OpenAI default)
 
 Additive feature release plus one intentional behavior change around LLM

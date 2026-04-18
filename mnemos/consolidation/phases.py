@@ -539,11 +539,11 @@ def phase_dedup(conn, mergeable_embeddings, mem_by_id, is_surge, execute=False):
 
 def _log_cluster(cluster, mem_by_id, num):
     """Log a cluster's contents."""
-    print(f"\n  Cluster {num} ({len(cluster)} memories):")
+    print(f"\n  Cluster {num} ({len(cluster)} memories):", flush=True)
     for mid in cluster:
         mem = mem_by_id.get(mid, {})
         content = mem.get("content", "?")[:100]
-        print(f"    #{mid} [{mem.get('project', '?')}] {content}")
+        print(f"    #{mid} [{mem.get('project', '?')}] {content}", flush=True)
 
 
 # =============================================================================
@@ -634,9 +634,9 @@ def phase_weave(conn, all_embeddings, mem_by_id, is_surge, execute=False):
         mem_b = mem_by_id[mid_b]
 
         print(f"\n  Pair: #{mid_a} [{mem_a.get('project')}] × "
-              f"#{mid_b} [{mem_b.get('project')}] (sim={cos:.3f})")
-        print(f"    A: {mem_a.get('content', '')[:80]}")
-        print(f"    B: {mem_b.get('content', '')[:80]}")
+              f"#{mid_b} [{mem_b.get('project')}] (sim={cos:.3f})", flush=True)
+        print(f"    A: {mem_a.get('content', '')[:80]}", flush=True)
+        print(f"    B: {mem_b.get('content', '')[:80]}", flush=True)
 
         if not execute:
             stats["pairs_evaluated"] += 1
@@ -661,7 +661,7 @@ def phase_weave(conn, all_embeddings, mem_by_id, is_surge, execute=False):
         stats["pairs_evaluated"] += 1
 
         if not result or "NO_LINK" in result:
-            print(f"    → No link")
+            print(f"    → No link", flush=True)
             continue
 
         link_type, strength, insight = _parse_weave_result(result)
@@ -790,9 +790,9 @@ def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge, execute=Fa
         newer = mem_by_id[newer_id]
 
         print(f"\n  Pair: #{older_id} ({older['created_at'][:10]}) × "
-              f"#{newer_id} ({newer['created_at'][:10]}) [{older.get('project')}] sim={cos:.3f}")
-        print(f"    Older: {older.get('content', '')[:80]}")
-        print(f"    Newer: {newer.get('content', '')[:80]}")
+              f"#{newer_id} ({newer['created_at'][:10]}) [{older.get('project')}] sim={cos:.3f}", flush=True)
+        print(f"    Older: {older.get('content', '')[:80]}", flush=True)
+        print(f"    Newer: {newer.get('content', '')[:80]}", flush=True)
 
         if not execute:
             continue
@@ -873,7 +873,7 @@ def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge, execute=Fa
 
         else:
             stats["compatible"] += 1
-            print(f"    → Compatible")
+            print(f"    → Compatible", flush=True)
 
         time.sleep(0.5)
 
@@ -926,7 +926,7 @@ def phase_synthesize(conn, all_embeddings, mem_by_id, execute=False):
     if not execute:
         for mid in packet_ids:
             mem = active.get(mid, {})
-            print(f"    #{mid} [{mem.get('project')}] {mem.get('content', '')[:80]}")
+            print(f"    #{mid} [{mem.get('project')}] {mem.get('content', '')[:80]}", flush=True)
         return stats
 
     # Build prompt
