@@ -142,6 +142,71 @@ def cleanup_stale_links(conn):
         return 0
 
 
+# --- Phase 0.5: Cemelify (v10.4.0, requires LLM) ---
+
+def _phase_cemelify(conn, store, mem_by_id, execute: bool = False):
+    """Rewrite non-CML or over-long active memories into CML form via LLM.
+
+    Candidates: content does not start with a CML prefix (F:/D:/C:/L:/P:/W:),
+    OR content length > 800 chars. Skips memories with consolidation_lock=1
+    (prose-protection convention, matches Phase 2 Dedup semantics).
+
+    Each candidate is passed through cemelify(), which falls back to the
+    original on LLM failure. We detect "no change" and skip the write to
+    avoid spurious updated_at churn. Updates persist via store.update_memory;
+    re-embed happens on the next bookkeeping pass (deferred by design to keep
+    this phase cheap).
+
+    Returns a stats dict: candidates / cemelified / unchanged / failed.
+    """
+    from ..cemelify import cemelify, _needs_cemelify
+
+    candidates = []
+    for mid, m in mem_by_id.items():
+        if m.get("consolidation_lock"):
+            continue
+        if _needs_cemelify(m.get("content")):
+            candidates.append(mid)
+
+    log(f"Phase 0.5 (Cemelify): {len(candidates)} candidates")
+    if not candidates:
+        return {"candidates": 0, "cemelified": 0, "unchanged": 0, "failed": 0}
+
+    cemelified = unchanged = failed = 0
+    for i, mid in enumerate(candidates):
+        if i and i % 100 == 0:
+            log(f"  Phase 0.5 progress: {i}/{len(candidates)}")
+        original = mem_by_id[mid].get("content") or ""
+        try:
+            new_content = cemelify(original)
+        except Exception:
+            failed += 1
+            continue
+        if not new_content or new_content == original:
+            unchanged += 1
+            continue
+        if execute:
+            try:
+                store.update_memory(mid, {"content": new_content})
+                cemelified += 1
+                # Reflect change so downstream phases (Dedup, Weave) in this
+                # same run operate on the cemelified content.
+                mem_by_id[mid]["content"] = new_content
+            except Exception:
+                failed += 1
+        else:
+            cemelified += 1  # dry-run accounting
+
+    log(f"Phase 0.5 (Cemelify) complete: cemelified={cemelified}, "
+        f"unchanged={unchanged}, failed={failed}")
+    return {
+        "candidates": len(candidates),
+        "cemelified": cemelified,
+        "unchanged": unchanged,
+        "failed": failed,
+    }
+
+
 # --- Main orchestrator ---
 
 def run_nyx_cycle(
@@ -179,14 +244,26 @@ def run_nyx_cycle(
     if phases is None:
         phases = {1, 2, 3, 4, 6}  # default: consolidation, no synthesis
 
-    has_llm = llm_is_configured()
+    import os as _os
+    disable_llm = _os.environ.get("MNEMOS_DISABLE_LLM") == "1"
+    has_llm = llm_is_configured() and not disable_llm
     llm_phases = {2, 3, 4, 5}  # phases that need an LLM
 
     if not has_llm and (phases & llm_phases):
-        log("No LLM configured (MNEMOS_LLM_API_KEY and MNEMOS_LLM_MODEL both required), skipping LLM-dependent phases.")
-        log(f"  Skipped phases: {sorted(phases & llm_phases)}")
-        log("  Phase 6 (Bookkeeping) will still run.")
-        phases = phases - llm_phases
+        # v10.4.0: loud-fail by default. Silent degradation is dangerous
+        # (users assume Nyx ran). MNEMOS_DISABLE_LLM=1 explicitly opts into
+        # SQL-only operation for deployments that intentionally do not
+        # configure an LLM.
+        if disable_llm:
+            phases = phases - llm_phases
+        else:
+            raise RuntimeError(
+                "No LLM configured (MNEMOS_LLM_API_KEY required, and "
+                "MNEMOS_LLM_MODEL required for non-OpenAI endpoints). "
+                f"Nyx cycle would skip phases {sorted(phases & llm_phases)}. "
+                "Set the env vars, or pass MNEMOS_DISABLE_LLM=1 to run "
+                "SQL-only phases (Phase 6 bookkeeping) intentionally."
+            )
 
     mode = "EXECUTE" if execute else "DRY RUN"
     log(f"Mnemos Nyx Cycle starting ({mode}, phases={sorted(phases)})")
@@ -220,6 +297,13 @@ def run_nyx_cycle(
             if 1 in phases:
                 new_ids, surge_detected = phase_triage(conn, mem_by_id, last_run)
                 is_surge = is_surge or surge_detected
+
+            # Phase 0.5: Cemelify (v10.4.0). Rewrites prose-form active
+            # memories into CML before clustering, so Dedup operates on
+            # canonical content. Skips consolidation_lock=1 memories.
+            phase_stats["phase0_5"] = _phase_cemelify(
+                conn, store, mem_by_id, execute=execute
+            )
 
             if 2 in phases:
                 phase_stats["phase2"] = phase_dedup(

@@ -170,12 +170,18 @@ def cmd_consolidate(mnemos, args):
         phases = {int(p) for p in args.phases.split(",")}
     elif args.nyx:
         phases = {1, 2, 3, 4, 5, 6}
-    stats = mnemos.consolidate(
-        execute=args.execute,
-        phases=phases,
-        surge=args.surge,
-        project=args.project,
-    )
+    try:
+        stats = mnemos.consolidate(
+            execute=args.execute,
+            phases=phases,
+            surge=args.surge,
+            project=args.project,
+        )
+    except RuntimeError as e:
+        # v10.4.0: loud-fail on missing LLM config. One-line stderr message
+        # (no traceback) and exit code 2 so cron / shell hooks can detect.
+        print(f"mnemos consolidate: {e}", file=sys.stderr)
+        sys.exit(2)
     print(json.dumps(stats, indent=2, default=str, ensure_ascii=False))
 
 

@@ -90,6 +90,20 @@ class Mnemos:
             content = content.replace("\x00", "")
         if tags and "\x00" in tags:
             tags = tags.replace("\x00", "")
+
+        # v10.4.0: opt-in cemelify-on-import. When MNEMOS_CEMELIFY_ON_IMPORT=1,
+        # rewrite raw content into CML before persistence. Falls back silently
+        # to the original content on any LLM failure (this flag must never
+        # turn LLM into a hard dependency). Skipped when the caller opts into
+        # consolidation_lock (prose-protection convention).
+        import os as _os
+        if _os.environ.get("MNEMOS_CEMELIFY_ON_IMPORT") == "1" and not consolidation_lock:
+            try:
+                from .cemelify import cemelify as _cemelify
+                content = _cemelify(content) or content
+            except Exception:
+                pass
+
         if mem_type not in VALID_TYPES:
             mem_type = "fact"
         if layer not in VALID_LAYERS:

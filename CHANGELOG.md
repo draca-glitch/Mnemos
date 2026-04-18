@@ -20,6 +20,55 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.4.0] - 2026-04-18 (cemelify-on-import, loud-fail, OpenAI default)
+
+Additive feature release plus one intentional behavior change around LLM
+configuration. Three new env-var knobs, one new consolidation phase, and a
+default model preset for the OpenAI endpoint.
+
+### Added
+
+- **Phase 0.5 (Cemelify) in the Nyx cycle.** New phase between Triage (1)
+  and Dedup (2) that scans active memories which either don't start with
+  a CML prefix (`F:`/`D:`/`C:`/`L:`/`P:`/`W:`) or are longer than 800
+  chars, and rewrites each via `cemelify()`. Skips memories with
+  `consolidation_lock=1` (prose-protection convention, matches Phase 2
+  semantics). Runs whenever the LLM-dependent block runs, so it inherits
+  the new loud-fail behavior below. Logs progress every 100 memories.
+  Updates persist via `store.update_memory`; re-embed happens on the next
+  bookkeeping pass (deferred by design to keep the phase cheap).
+- **`MNEMOS_CEMELIFY_ON_IMPORT=1`** (opt-in env): when set, `store_memory()`
+  pipes raw content through `cemelify()` before persistence, so memories
+  land already in CML form. Falls back silently to the raw content on any
+  LLM failure: this flag never turns LLM into a hard dependency. Skipped
+  when the caller sets `consolidation_lock=True`.
+- **`mnemos/cemelify.py`** new module exposing `cemelify(content)` —
+  a single-entry helper that routes through `consolidation.llm.chat()`,
+  inheriting all env routing (API URL, key, model, per-phase overrides,
+  the new OpenAI default below).
+- **Default model preset for the OpenAI endpoint.** If
+  `MNEMOS_LLM_API_URL` points at `api.openai.com` (the default) and
+  `MNEMOS_LLM_MODEL` is unset, Mnemos now defaults the model to
+  `gpt-4o-mini` (recommended per the consolidation-quality bench in
+  `docs/benchmarks.md`, 91.8-97.3% unique-fact preservation at $0.05/run).
+  **No default for non-OpenAI endpoints**, since provider-specific model
+  naming is too heterogeneous to guess. With this default, an OpenAI user
+  only needs to set `MNEMOS_LLM_API_KEY` to be fully configured.
+
+### Changed
+
+- **`mnemos consolidate` now loud-fails when LLM is required but
+  unconfigured** (intentional behavior break). Previously the cycle
+  logged a warning and silently skipped LLM phases while running Phase 6
+  bookkeeping; users reported assuming the full Nyx had run. Now
+  `run_nyx_cycle` raises `RuntimeError` and the CLI exits with code 2
+  (one-line stderr message, no traceback). Set `MNEMOS_DISABLE_LLM=1` to
+  restore the previous silent SQL-only behavior explicitly. This is the
+  only backward-incompatible change in v10.4.0; all other additions are
+  strictly opt-in.
+
+---
+
 ## [10.3.10] - 2026-04-16 (second-pass audit fixes)
 
 Four more real bugs from a deeper second audit pass. All low severity

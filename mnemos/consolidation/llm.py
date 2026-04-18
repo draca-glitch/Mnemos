@@ -64,12 +64,22 @@ def _get_config(phase=None):
     phase_suffix = f"_{phase.upper()}" if phase else ""
     phase_model = os.environ.get(f"MNEMOS_LLM_MODEL{phase_suffix}") if phase else None
     phase_url = os.environ.get(f"MNEMOS_LLM_API_URL{phase_suffix}") if phase else None
+    url = phase_url or os.environ.get("MNEMOS_LLM_API_URL", DEFAULT_API_URL)
+
+    # v10.4.0: default model preset for the OpenAI endpoint only. If the
+    # user left MNEMOS_LLM_API_URL at the OpenAI default AND MNEMOS_LLM_MODEL
+    # is unset, fall back to gpt-4o-mini (recommended per the consolidation
+    # quality bench in docs/benchmarks.md). No default for non-OpenAI URLs:
+    # provider model naming is too heterogeneous to guess.
+    env_model = os.environ.get("MNEMOS_LLM_MODEL")
+    openai_default = "gpt-4o-mini" if (not env_model and "api.openai.com" in url) else None
+
     return {
-        "url": phase_url or os.environ.get("MNEMOS_LLM_API_URL", DEFAULT_API_URL),
+        "url": url,
         "key": os.environ.get("MNEMOS_LLM_API_KEY", ""),
-        "model": phase_model or os.environ.get("MNEMOS_LLM_MODEL", DEFAULT_MODEL),
+        "model": phase_model or env_model or openai_default or DEFAULT_MODEL,
         "fast_model": os.environ.get("MNEMOS_LLM_FAST_MODEL")
-                      or os.environ.get("MNEMOS_LLM_MODEL", DEFAULT_FAST_MODEL),
+                      or env_model or openai_default or DEFAULT_FAST_MODEL,
         "phase_model_explicit": bool(phase_model),
     }
 

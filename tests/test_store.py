@@ -81,9 +81,11 @@ def test_store_search_get_update_delete(mnemos_with_tmpdb):
 
 def test_consolidate_dry_run(mnemos_with_tmpdb, monkeypatch):
     m = mnemos_with_tmpdb
-    # Ensure no LLM is configured so we exercise the graceful-skip path
+    # v10.4.0: silent-skip when LLM is unconfigured was replaced by loud-fail.
+    # MNEMOS_DISABLE_LLM=1 restores the silent SQL-only behavior explicitly.
     monkeypatch.delenv("MNEMOS_LLM_API_KEY", raising=False)
     monkeypatch.delenv("MNEMOS_LLM_MODEL", raising=False)
+    monkeypatch.setenv("MNEMOS_DISABLE_LLM", "1")
 
     m.store_memory(project="test", content="F:one memory")
     m.store_memory(project="test", content="F:another memory")
