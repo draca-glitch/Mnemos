@@ -20,6 +20,27 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.4.3] - 2026-05-18 (LLM read-timeout hardening)
+
+Robustness patch for the consolidation LLM client. No behavior change on
+healthy calls; prevents a known degradation mode under slow providers.
+
+### Fixed
+
+- **`consolidation/llm.py` per-call read timeout raised 60s → 240s,
+  env-tunable via `MNEMOS_LLM_TIMEOUT`.** The hardcoded 60s was too tight
+  for reasoning-class models (e.g. gpt-5-mini) on large hierarchical-merge
+  prompts: a slow-but-completing call timed out across all retries,
+  `chat()` returned `None`, and `phases.py` fell back to raw concatenation
+  of the unmerged pair, inflating merged memories and dropping merge
+  quality without changing the model. Observed in production 2026-05-11
+  (DO Gradient latency) and reproduced while evaluating gpt-5-mini for the
+  MERGE phase. The retry/backoff logic was already sound; only the timeout
+  ceiling was the gap. Operators can tune per provider without a code
+  change.
+
+---
+
 ## [10.4.2] - 2026-04-18 (CLI honors MNEMOS_NAMESPACE)
 
 Tiny patch fixing a CLI / MCP-server divergence in env handling.

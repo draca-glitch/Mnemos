@@ -48,6 +48,13 @@ DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions"
 DEFAULT_MODEL = None
 DEFAULT_FAST_MODEL = None
 
+# Per-call read timeout (seconds). 60s was too tight for reasoning-class
+# models on large hierarchical-merge prompts: a slow-but-completing call
+# would time out across all retries -> chat() returns None -> phases.py
+# raw-concatenation fallback (the 2026-05-11 merge-quality degradation).
+# Env-tunable so operators can adjust per provider without a code change.
+LLM_TIMEOUT = int(os.environ.get("MNEMOS_LLM_TIMEOUT", "240"))
+
 
 def _get_config(phase=None):
     """Read LLM config from environment. Returns dict, may have empty values.
@@ -139,7 +146,7 @@ def chat(messages, max_tokens=1024, temperature=0.3, fast=False, phase=None):
     for attempt in range(3):
         try:
             req = urllib.request.Request(cfg["url"], data=body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 choices = data.get("choices", [])
                 if choices:
