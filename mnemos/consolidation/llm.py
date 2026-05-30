@@ -56,6 +56,15 @@ DEFAULT_FAST_MODEL = None
 LLM_TIMEOUT = int(os.environ.get("MNEMOS_LLM_TIMEOUT", "240"))
 
 
+# Per-chat() wall-clock budget (seconds). Caps total time spent across all
+# 3 retries + their exponential backoffs. Without this, three 240s read
+# timeouts plus backoffs can burn ~726s on a single hung call, which on
+# 2026-05-27 sank a midweek Nyx run by eating budget that the cemelify
+# loop needed. 480s gives one full retry-with-backoff cycle but stops the
+# call before a third 240s wait. Env-tunable per provider.
+LLM_WALL_BUDGET = int(os.environ.get("MNEMOS_LLM_WALL_BUDGET", "480"))
+
+
 def _get_config(phase=None):
     """Read LLM config from environment. Returns dict, may have empty values.
 
@@ -103,7 +112,7 @@ def _log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 
-def chat(messages, max_tokens=1024, temperature=0.3, fast=False, phase=None):
+def chat(messages, max_tokens=1024, temperature=0.3, fast=False, phase=None, timeout=None):
     """Call an OpenAI-compatible chat completions endpoint.
 
     Returns the response content string, or None on any failure (no LLM
@@ -118,6 +127,13 @@ def chat(messages, max_tokens=1024, temperature=0.3, fast=False, phase=None):
                "SYNTHESIZE"). When set, MNEMOS_LLM_MODEL_<PHASE> and
                MNEMOS_LLM_API_URL_<PHASE> env vars are consulted first,
                falling back to the global MNEMOS_LLM_MODEL / _API_URL.
+        timeout: optional per-call read timeout (seconds) overriding the
+               module-level LLM_TIMEOUT for this single call. Use a
+               tighter value for small/fast paths (e.g. Phase 0.5
+               Cemelify) so one slow candidate cannot consume budget
+               meant for hierarchical-merge prompts. None = LLM_TIMEOUT.
+               The per-chat() wall-clock ceiling LLM_WALL_BUDGET still
+               applies on top, regardless of this override.
     """
     cfg = _get_config(phase=phase)
     if not cfg["key"]:
@@ -143,10 +159,15 @@ def chat(messages, max_tokens=1024, temperature=0.3, fast=False, phase=None):
         "content-type": "application/json",
     }
 
+    call_timeout = timeout if timeout is not None else LLM_TIMEOUT
+    start = time.monotonic()
     for attempt in range(3):
+        if time.monotonic() - start > LLM_WALL_BUDGET:
+            _log(f"LLM API wall-budget exceeded ({LLM_WALL_BUDGET}s), giving up")
+            return None
         try:
             req = urllib.request.Request(cfg["url"], data=body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
+            with urllib.request.urlopen(req, timeout=call_timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 choices = data.get("choices", [])
                 if choices:
@@ -174,13 +195,13 @@ def chat(messages, max_tokens=1024, temperature=0.3, fast=False, phase=None):
 # Backwards-compat aliases for the Nyx cycle phase code.
 # All three now accept the optional `phase` parameter to route to
 # MNEMOS_LLM_MODEL_<PHASE> when set, falling back to the global model.
-def haiku_chat(messages, max_tokens=256, temperature=0.3, phase=None):
-    return chat(messages, max_tokens=max_tokens, temperature=temperature, fast=True, phase=phase)
+def haiku_chat(messages, max_tokens=256, temperature=0.3, phase=None, timeout=None):
+    return chat(messages, max_tokens=max_tokens, temperature=temperature, fast=True, phase=phase, timeout=timeout)
 
 
-def sonnet_chat(messages, max_tokens=1024, temperature=0.3, phase=None):
-    return chat(messages, max_tokens=max_tokens, temperature=temperature, fast=False, phase=phase)
+def sonnet_chat(messages, max_tokens=1024, temperature=0.3, phase=None, timeout=None):
+    return chat(messages, max_tokens=max_tokens, temperature=temperature, fast=False, phase=phase, timeout=timeout)
 
 
-def opus_chat(messages, max_tokens=2048, temperature=0.3, phase=None):
-    return chat(messages, max_tokens=max_tokens, temperature=temperature, fast=False, phase=phase)
+def opus_chat(messages, max_tokens=2048, temperature=0.3, phase=None, timeout=None):
+    return chat(messages, max_tokens=max_tokens, temperature=temperature, fast=False, phase=phase, timeout=timeout)

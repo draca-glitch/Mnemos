@@ -20,6 +20,46 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.4.4] - 2026-05-30 (LLM wall-clock budget + per-call timeout override)
+
+Robustness patch for the consolidation LLM client. Caps total wall-clock
+per `chat()` call across retries and lets fast paths request a tighter
+read timeout. No behavior change on healthy calls.
+
+### Fixed
+
+- **`consolidation/llm.py` adds `MNEMOS_LLM_WALL_BUDGET` (default 480s)
+  ceiling on total time spent in a single `chat()` call across all
+  retries.** Without it, three 240s read timeouts plus their backoffs
+  could burn ~726s on one hung call. On 2026-05-27 this sank
+  `memory-dream-midweek.service`: a single LLM call ate ~12min of budget
+  via the 3-retry-on-timeout path, the cemelify loop then ran 55min over
+  93 candidates, and systemd's `TimeoutStartSec=3600` killed Phase 2A
+  mid-merge of Cluster 2. The new budget gives the retry path one full
+  retry-with-backoff cycle and then exits, returning `None` so the phase
+  fallback continues. Env-tunable per provider.
+- **`chat()` and the aliases `haiku_chat` / `sonnet_chat` / `opus_chat`
+  accept a `timeout=` kwarg** that overrides the global `LLM_TIMEOUT`
+  for a single call. Lets fast/small paths cap themselves without
+  globally tightening, which would hurt hierarchical-merge prompts that
+  legitimately need the larger window.
+- **`cemelify.py` passes `timeout=90`** to its `chat()` call. Phase 0.5
+  cemelify items are small (single memory rewrite, ~512 token output)
+  and should never need the consolidation-class 240s window; 90s is
+  generous for a healthy call and bounds the cost of a hung one. Worst
+  case per call drops from ~726s to ~280s, and the wall-budget caps
+  that further.
+
+### Operational (companion change on the deployer side, not in this repo)
+
+On Epsilon prod, `memory-dream-midweek.service` and
+`memory-consolidate-nightly.service` had `TimeoutStartSec` raised from
+3600s to 7200s. Belt-and-suspenders so a worst-case slow run is not
+killed mid-phase while the code-level budgets above prevent a single
+bad call from dominating.
+
+---
+
 ## [10.4.3] - 2026-05-18 (LLM read-timeout hardening)
 
 Robustness patch for the consolidation LLM client. No behavior change on

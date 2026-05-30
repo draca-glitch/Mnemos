@@ -62,7 +62,12 @@ def cemelify(content: str, max_tokens: int = 512) -> str:
         {"role": "user", "content": content},
     ]
     try:
-        response = chat(messages, max_tokens=max_tokens, temperature=0.2)
+        # Cemelify items are small (single memory rewrite, output ~512 tokens),
+        # so cap the per-call read timeout tighter than the consolidation
+        # default. One slow candidate must not consume the read window meant
+        # for hierarchical-merge prompts. The LLM_WALL_BUDGET ceiling in
+        # llm.py still applies across retries.
+        response = chat(messages, max_tokens=max_tokens, temperature=0.2, timeout=90)
     except Exception:
         return content
 
