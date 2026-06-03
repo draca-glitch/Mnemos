@@ -86,8 +86,12 @@ def _vec_join_col(conn):
         return "rowid"
 
 
-def cleanup_orphan_vectors(conn):
-    """Remove vectors for archived/deleted memories."""
+def cleanup_orphan_vectors(conn, execute: bool = True):
+    """Remove vectors for archived/deleted memories.
+
+    Returns the count of orphans found. Only mutates when execute=True; a
+    dry run reports what would be removed without touching the store.
+    """
     active_ids = {r[0] for r in conn.execute(
         "SELECT id FROM memories WHERE status = 'active'"
     ).fetchall()}
@@ -98,16 +102,22 @@ def cleanup_orphan_vectors(conn):
     removed = 0
     for meta_id, source_id in embedded:
         if source_id not in active_ids:
-            conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta_id,))
-            conn.execute("DELETE FROM embed_meta WHERE id = ?", (meta_id,))
+            if execute:
+                conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta_id,))
+                conn.execute("DELETE FROM embed_meta WHERE id = ?", (meta_id,))
             removed += 1
-    if removed:
+    if removed and execute:
         conn.commit()
     return removed
 
 
-def decay_access_counts(conn):
-    """Decay access_count by 1 for memories not accessed in 7+ days."""
+def decay_access_counts(conn, execute: bool = True):
+    """Decay access_count by 1 for memories not accessed in 7+ days.
+
+    Returns (decayed, demoted) counts. Only mutates when execute=True; a
+    dry run computes the same counts without writing, so a preview never
+    silently demotes importance or decays counts on the live store.
+    """
     rows = conn.execute("""
         SELECT id, access_count, importance FROM memories
         WHERE status = 'active' AND access_count > 0
@@ -123,30 +133,40 @@ def decay_access_counts(conn):
             if new_count >= thresh:
                 target = level
                 break
-        if imp in (6, 7, 8) and imp > target:
-            conn.execute(
-                "UPDATE memories SET access_count = ?, importance = ? WHERE id = ?",
-                (new_count, target, mid),
-            )
+        will_demote = imp in (6, 7, 8) and imp > target
+        if execute:
+            if will_demote:
+                conn.execute(
+                    "UPDATE memories SET access_count = ?, importance = ? WHERE id = ?",
+                    (new_count, target, mid),
+                )
+            else:
+                conn.execute("UPDATE memories SET access_count = ? WHERE id = ?", (new_count, mid))
+        if will_demote:
             demoted += 1
-        else:
-            conn.execute("UPDATE memories SET access_count = ? WHERE id = ?", (new_count, mid))
         decayed += 1
-    if decayed:
+    if decayed and execute:
         conn.commit()
     return decayed, demoted
 
 
-def cleanup_stale_links(conn):
-    """Remove links where either endpoint is archived."""
+def cleanup_stale_links(conn, execute: bool = True):
+    """Remove links where either endpoint is archived.
+
+    Returns the count of stale links. Only deletes when execute=True; a
+    dry run counts them via SELECT without mutating.
+    """
+    where = (
+        "source_id NOT IN (SELECT id FROM memories WHERE status='active') "
+        "OR target_id NOT IN (SELECT id FROM memories WHERE status='active')"
+    )
     try:
-        n = conn.execute("""
-            DELETE FROM memory_links
-            WHERE source_id NOT IN (SELECT id FROM memories WHERE status='active')
-               OR target_id NOT IN (SELECT id FROM memories WHERE status='active')
-        """).rowcount
-        if n:
-            conn.commit()
+        if execute:
+            n = conn.execute(f"DELETE FROM memory_links WHERE {where}").rowcount
+            if n:
+                conn.commit()
+        else:
+            n = conn.execute(f"SELECT COUNT(*) FROM memory_links WHERE {where}").fetchone()[0]
         return n
     except Exception:
         return 0
@@ -364,20 +384,21 @@ def run_nyx_cycle(
                         conn, all_embeddings, mem_by_id, execute=execute
                     )
 
-    # --- Phase 6: Bookkeeping (always runs) ---
+    # --- Phase 6: Bookkeeping (runs even without an LLM; respects execute) ---
     if 6 in phases:
         log("Phase 6: Bookkeeping...")
-        orphaned = cleanup_orphan_vectors(conn)
+        verb = "" if execute else "would "
+        orphaned = cleanup_orphan_vectors(conn, execute=execute)
         if orphaned:
-            log(f"  Cleaned {orphaned} orphaned vectors")
+            log(f"  {verb}cleaned {orphaned} orphaned vectors")
 
-        decayed, demoted = decay_access_counts(conn)
+        decayed, demoted = decay_access_counts(conn, execute=execute)
         if decayed:
-            log(f"  Decayed {decayed} access counts ({demoted} demoted)")
+            log(f"  {verb}decayed {decayed} access counts ({demoted} demoted)")
 
-        stale_links = cleanup_stale_links(conn)
+        stale_links = cleanup_stale_links(conn, execute=execute)
         if stale_links:
-            log(f"  Removed {stale_links} stale links")
+            log(f"  {verb}removed {stale_links} stale links")
 
         phase_stats["phase6"] = {
             "orphans_cleaned": orphaned,

@@ -20,6 +20,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [10.5.1] - 2026-06-03 (Dry-run safety: Phase 6 respects execute)
+
+### Fixed
+- Phase 6 bookkeeping (`decay_access_counts`, `cleanup_stale_links`, `cleanup_orphan_vectors`) committed unconditionally, so a dry run (`execute=False`) silently decayed access counts and demoted importance on the live store while `log_consolidation_run` (correctly `execute`-gated) recorded nothing. The result was a store that had been mutated but a run that was never logged, so "Last run: never" persisted and every subsequent run re-triaged from scratch. All three Phase 6 mutators now take an `execute` flag (default `True` for backward compatibility) and only write when it is set; a dry run computes and reports the would-be counts without touching the store. Real runs (`execute=True`, including the weekly cron and SQL-only no-LLM runs) are unchanged and continue to log. Adds `tests/test_v105_features.py` (5 tests).
+
 ## [10.5.0] - 2026-06-03 (Resource-aware models + standalone SQL-only triage)
 
 Changes aimed at running Mnemos well on small or shared hosts. All new
