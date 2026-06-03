@@ -50,3 +50,6 @@ Thumbs.db
 config.local.json
 .env
 .env.local
+
+# Local per-machine agent instructions, never part of the package
+CLAUDE.md
