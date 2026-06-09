@@ -709,8 +709,13 @@ class SQLiteStore(MnemosStore):
             return
         try:
             conn = self._get_conn()
+            # called_at is set explicitly rather than relying on the column
+            # default: tables created by pre-package deployments declare
+            # called_at NOT NULL with no default, and relying on the default
+            # there makes every insert fail (and get swallowed) silently.
             conn.execute(
-                "INSERT INTO tool_usage (tool_name) VALUES (?)",
+                "INSERT INTO tool_usage (tool_name, called_at) "
+                "VALUES (?, datetime('now', 'localtime'))",
                 (tool_name,),
             )
             conn.commit()
