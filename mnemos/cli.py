@@ -131,6 +131,10 @@ def cmd_embed_status(mnemos, args):
     print(json.dumps(mnemos.embed_status(), indent=2, ensure_ascii=False))
 
 
+def cmd_reindex_archived(mnemos, args):
+    print(json.dumps(mnemos.reindex_archived(), indent=2, ensure_ascii=False))
+
+
 def cmd_doctor(mnemos, args):
     report = mnemos.doctor(migrate=getattr(args, "migrate", False))
     if args.json:
@@ -318,6 +322,11 @@ def main(argv=None):
     # embed-status
     p = sub.add_parser("embed-status", help="Embedding coverage report")
     p.set_defaults(fn=cmd_embed_status)
+
+    # reindex-archived
+    p = sub.add_parser("reindex-archived",
+                       help="Backfill the tier-2 archived vector index (embed all archived memories)")
+    p.set_defaults(fn=cmd_reindex_archived)
 
     # doctor
     p = sub.add_parser("doctor", help="Health check (and optional self-repair of schema drift)")

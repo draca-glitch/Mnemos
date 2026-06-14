@@ -52,6 +52,25 @@ def _ensure_vec_db(path, dims=FASTEMBED_DIMS):
             UNIQUE(source_db, source_id)
         )
     """)
+    # Tier-2 recall index (v10.7.0): a SEPARATE vector index for archived
+    # memories. Keeping archived vectors out of embed_vec is deliberate, the
+    # primary KNN over-fetches k=limit*3 and post-filters status, so mixing
+    # archived (the bulk of the corpus) into embed_vec would crowd out active
+    # hits before the filter runs. A separate index lets primary search stay
+    # active-only with zero regression while expand_merged can vector-search
+    # the archived originals directly instead of only reaching them by lineage.
+    conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS embed_vec_arch USING vec0(embedding float[{dims}])")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS embed_meta_arch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_db TEXT NOT NULL,
+            source_id INTEGER NOT NULL,
+            text_hash TEXT,
+            model TEXT,
+            embedded_at TEXT DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(source_db, source_id)
+        )
+    """)
     return conn
 
 
@@ -564,6 +583,136 @@ class SQLiteStore(MnemosStore):
         )
         results = [(r["source_id"], r["distance"]) for r in rows if r["source_id"] in active]
         return results[:limit]
+
+    # --- Tier-2 archived index (v10.7.0) ---
+
+    def _store_archived_embedding(self, mid: int, embedding: list,
+                                  text_hash: Optional[str] = None):
+        """Store/replace a memory's embedding in the tier-2 archived index.
+
+        Mirrors _store_embedding but targets embed_vec_arch / embed_meta_arch,
+        which we always create as the implicit-rowid vec0 schema.
+        """
+        conn = self._get_conn()
+        existing = conn.execute(
+            "SELECT id FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
+            (self.SOURCE_KEY, mid),
+        ).fetchone()
+        if existing:
+            conn.execute("DELETE FROM embed_vec_arch WHERE rowid = ?", (existing["id"],))
+            conn.execute(
+                "DELETE FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
+                (self.SOURCE_KEY, mid),
+            )
+        cur = conn.execute(
+            "INSERT INTO embed_vec_arch(embedding) VALUES (?)",
+            (_serialize_vec(embedding),),
+        )
+        vec_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO embed_meta_arch (id, source_db, source_id, text_hash) VALUES (?, ?, ?, ?)",
+            (vec_id, self.SOURCE_KEY, mid, text_hash),
+        )
+        conn.commit()
+
+    def move_embedding_to_archive(self, mid: int) -> bool:
+        """Move a memory's vector from the active index into the archived index.
+
+        Called when a memory is archived by consolidation: its content now
+        lives in a consolidated active memory, but we keep the original's
+        vector for tier-2 recall instead of deleting it. Returns False if the
+        memory had no active embedding to move.
+        """
+        conn = self._get_conn()
+        join_col = self._get_vec_join_col()
+        meta = conn.execute(
+            "SELECT id, text_hash FROM embed_meta WHERE source_db = ? AND source_id = ?",
+            (self.SOURCE_KEY, mid),
+        ).fetchone()
+        if not meta:
+            return False
+        vrow = conn.execute(
+            f"SELECT vec_to_json(embedding) AS j FROM embed_vec WHERE {join_col} = ?",
+            (meta["id"],),
+        ).fetchone()
+        if not vrow or vrow["j"] is None:
+            return False
+        import json as _json
+        self._store_archived_embedding(mid, _json.loads(vrow["j"]), meta["text_hash"])
+        conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta["id"],))
+        conn.execute(
+            "DELETE FROM embed_meta WHERE source_db = ? AND source_id = ?",
+            (self.SOURCE_KEY, mid),
+        )
+        conn.commit()
+        return True
+
+    def search_vec_archived(self, embedding, namespace=None, project=None,
+                            subcategory=None, layer=None, type_filter=None,
+                            valid_only=True, limit=20):
+        """KNN over the tier-2 archived index. Always status='archived'.
+
+        Independent of whether an archived memory's consolidated parent ranked
+        in primary search, so consolidation that dropped a detail no longer
+        makes that detail unrecallable.
+        """
+        conn = self._get_conn()
+        ns = namespace or self.namespace
+        rows = conn.execute(
+            """SELECT em.source_id, ev.distance
+               FROM embed_vec_arch ev
+               JOIN embed_meta_arch em ON em.id = ev.rowid
+               WHERE em.source_db = ? AND ev.embedding MATCH ? AND k = ?
+               ORDER BY ev.distance""",
+            (self.SOURCE_KEY, _serialize_vec(embedding), limit * 3),
+        ).fetchall()
+        if not rows:
+            return []
+        candidate_ids = [r["source_id"] for r in rows]
+        ph = ",".join("?" for _ in candidate_ids)
+        params = list(candidate_ids) + [ns]
+        clause = " AND namespace = ? AND status = 'archived'"
+        if project:
+            clause += " AND project = ?"
+            params.append(project)
+        if subcategory:
+            clause += " AND subcategory = ?"
+            params.append(subcategory)
+        if layer:
+            clause += " AND layer = ?"
+            params.append(layer)
+        if type_filter:
+            clause += " AND type = ?"
+            params.append(type_filter)
+        if valid_only:
+            clause += " AND (valid_until IS NULL OR valid_until >= date('now', 'localtime'))"
+        keep = set(
+            r[0] for r in conn.execute(
+                f"SELECT id FROM memories WHERE id IN ({ph}){clause}", params
+            ).fetchall()
+        )
+        return [(r["source_id"], r["distance"]) for r in rows if r["source_id"] in keep][:limit]
+
+    def archived_embed_count(self) -> int:
+        conn = self._get_conn()
+        return conn.execute(
+            "SELECT COUNT(*) FROM embed_meta_arch WHERE source_db = ?", (self.SOURCE_KEY,)
+        ).fetchone()[0]
+
+    def archived_missing_embeddings(self, namespace=None) -> list:
+        """Archived memory rows that have no vector in the tier-2 index yet."""
+        conn = self._get_conn()
+        ns = namespace or self.namespace
+        rows = conn.execute(
+            """SELECT m.* FROM memories m
+               WHERE m.status = 'archived' AND m.namespace = ?
+               AND NOT EXISTS (
+                   SELECT 1 FROM embed_meta_arch em
+                   WHERE em.source_db = ? AND em.source_id = m.id
+               )""",
+            (ns, self.SOURCE_KEY),
+        ).fetchall()
+        return [self._row_to_memory(r) for r in rows]
 
     def get_memories_by_ids(self, ids: list) -> dict:
         if not ids:

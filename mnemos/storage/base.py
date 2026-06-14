@@ -174,6 +174,26 @@ class MnemosStore(ABC):
         pipeline). This protects tier-2 recall from surfacing outdated facts.
         """
 
+    # --- Tier-2 archived index (v10.7.0, optional; SQLite implements it) ---
+
+    def search_vec_archived(self, embedding, **kwargs) -> list:
+        """KNN over the archived vector index. Backends without it return []."""
+        return []
+
+    def _store_archived_embedding(self, mid: int, embedding: list, text_hash=None) -> None:
+        """Store a vector in the archived index. No-op by default."""
+
+    def move_embedding_to_archive(self, mid: int) -> bool:
+        """Move a vector from the active to the archived index. No-op by default."""
+        return False
+
+    def archived_missing_embeddings(self, namespace=None) -> list:
+        """Archived memories lacking an archived-index vector. Empty by default."""
+        return []
+
+    def archived_embed_count(self) -> int:
+        return 0
+
     # --- Statistics ---
 
     @abstractmethod

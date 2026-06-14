@@ -87,28 +87,66 @@ def _vec_join_col(conn):
 
 
 def cleanup_orphan_vectors(conn, execute: bool = True):
-    """Remove vectors for archived/deleted memories.
+    """Tier-2 aware vector hygiene (v10.7.0).
 
-    Returns the count of orphans found. Only mutates when execute=True; a
-    dry run reports what would be removed without touching the store.
+    Vectors for archived memories are MOVED into the archived index
+    (embed_vec_arch) so tier-2 recall can vector-search the originals directly,
+    rather than deleted. A vector is only removed outright when its memory row
+    no longer exists at all (a hard delete). Returns the count of vectors moved
+    or removed. Only mutates when execute=True.
     """
-    active_ids = {r[0] for r in conn.execute(
-        "SELECT id FROM memories WHERE status = 'active'"
-    ).fetchall()}
+    from ..storage.sqlite_store import _serialize_vec
+    status_by_id = {
+        r[0]: r[1] for r in conn.execute("SELECT id, status FROM memories").fetchall()
+    }
     embedded = conn.execute(
-        "SELECT id, source_id FROM embed_meta WHERE source_db = ?", (SOURCE_KEY,)
+        "SELECT id, source_id, text_hash FROM embed_meta WHERE source_db = ?", (SOURCE_KEY,)
     ).fetchall()
     join_col = _vec_join_col(conn)
-    removed = 0
-    for meta_id, source_id in embedded:
-        if source_id not in active_ids:
-            if execute:
-                conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta_id,))
-                conn.execute("DELETE FROM embed_meta WHERE id = ?", (meta_id,))
+    moved = removed = 0
+    for meta_id, source_id, thash in embedded:
+        st = status_by_id.get(source_id)
+        if st == "active":
+            continue
+        if not execute:
+            moved += 1  # would be handled (moved or removed)
+            continue
+        if st == "archived":
+            vrow = conn.execute(
+                f"SELECT vec_to_json(embedding) AS j FROM embed_vec WHERE {join_col} = ?",
+                (meta_id,),
+            ).fetchone()
+            if vrow and vrow[0] is not None:
+                emb = json.loads(vrow[0])
+                ex = conn.execute(
+                    "SELECT id FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
+                    (SOURCE_KEY, source_id),
+                ).fetchone()
+                if ex:
+                    conn.execute("DELETE FROM embed_vec_arch WHERE rowid = ?", (ex[0],))
+                    conn.execute(
+                        "DELETE FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
+                        (SOURCE_KEY, source_id),
+                    )
+                cur = conn.execute(
+                    "INSERT INTO embed_vec_arch(embedding) VALUES (?)", (_serialize_vec(emb),)
+                )
+                conn.execute(
+                    "INSERT INTO embed_meta_arch (id, source_db, source_id, text_hash) "
+                    "VALUES (?, ?, ?, ?)",
+                    (cur.lastrowid, SOURCE_KEY, source_id, thash),
+                )
+                moved += 1
+            conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta_id,))
+            conn.execute("DELETE FROM embed_meta WHERE id = ?", (meta_id,))
+        else:
+            # memory row gone entirely -> drop the vector
+            conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta_id,))
+            conn.execute("DELETE FROM embed_meta WHERE id = ?", (meta_id,))
             removed += 1
-    if removed and execute:
+    if (moved or removed) and execute:
         conn.commit()
-    return removed
+    return moved + removed
 
 
 def decay_access_counts(conn, execute: bool = True):

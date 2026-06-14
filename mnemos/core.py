@@ -690,7 +690,9 @@ class Mnemos:
                         r["linked_memories"] = summaries
 
         # Tier-2 recall: expand consolidated memories to their source originals
+        tier2_recall = None
         if expand_merged:
+            surfaced = {r["id"] for r in results if "id" in r}
             for r in results:
                 try:
                     sources = self.store.get_merged_sources(r["id"], valid_only=True)
@@ -698,6 +700,32 @@ class Mnemos:
                     sources = []
                 if sources:
                     r["merged_from"] = [s.to_dict() for s in sources]
+                    surfaced.update(s.id for s in sources)
+            # v10.7.0: also KNN the archived index directly so an archived
+            # original is reachable even when its consolidated parent did not
+            # rank in primary search. The lineage join above can only surface
+            # originals whose parent already ranked; this can't.
+            if query_embedding is not None:
+                try:
+                    arch_hits = self.store.search_vec_archived(
+                        query_embedding, project=project, subcategory=subcategory,
+                        layer=layer, type_filter=type_filter, valid_only=valid_only,
+                        limit=limit,
+                    )
+                except Exception:
+                    arch_hits = []
+                dist_by_id = {sid: dist for sid, dist in arch_hits}
+                fresh = [sid for sid, _ in arch_hits if sid not in surfaced]
+                if fresh:
+                    mems = self.store.get_memories_by_ids(fresh)
+                    tier2_recall = []
+                    for sid in fresh:  # preserve distance order
+                        mem = mems.get(sid)
+                        if mem is None:
+                            continue
+                        d = mem.to_dict()
+                        d["vec_distance"] = round(float(dist_by_id[sid]), 4)
+                        tier2_recall.append(d)
 
         # Opt-in retrieval logging: best-effort side channel, never affects
         # the returned result. Logs (query, memory_id) per returned hit so
@@ -721,6 +749,8 @@ class Mnemos:
             response["widened"] = True
         if expand_merged:
             response["expand_merged"] = True
+        if tier2_recall:
+            response["tier2_recall"] = tier2_recall
         if snippet_chars:
             response["snippet_chars"] = snippet_chars
         if include_linked:
@@ -1134,6 +1164,38 @@ class Mnemos:
             if sub:
                 result[project]["subcategories"][sub] = n
         return result
+
+    def reindex_archived(self, batch_size: int = 128) -> dict:
+        """Backfill the tier-2 archived vector index (v10.7.0).
+
+        Embeds every archived memory that has no vector in embed_vec_arch yet
+        and stores it in the archived index, so tier-2 recall (expand_merged)
+        can reach originals that consolidation archived and stripped of their
+        primary-index vectors. Idempotent: re-running only embeds what is still
+        missing.
+        """
+        if not hasattr(self.store, "archived_missing_embeddings"):
+            return {"error": "tier-2 index only supported on SQLite-based stores"}
+        missing = self.store.archived_missing_embeddings(namespace=self.namespace)
+        pending = len(missing)
+        done = 0
+        for i in range(0, pending, batch_size):
+            batch = missing[i:i + batch_size]
+            texts = [
+                prep_memory_text(m.project, m.content, m.tags or "",
+                                 mem_type=m.type, layer=m.layer)
+                for m in batch
+            ]
+            vecs = embed(texts, prefix="passage")
+            for m, text, v in zip(batch, texts, vecs):
+                if v:
+                    self.store._store_archived_embedding(m.id, v, embed_text_hash(text))
+                    done += 1
+        return {
+            "archived_pending_before": pending,
+            "embedded_now": done,
+            "archived_index_size": self.store.archived_embed_count(),
+        }
 
     def embed_status(self) -> dict:
         """Embedding coverage report."""

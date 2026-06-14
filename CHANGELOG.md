@@ -4,6 +4,20 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.7.0] - 2026-06-14 (Tier-2 archived recall: keep merged-away vectors)
+
+Consolidation used to delete the embedding of every memory it archived, so the only path to a merged-away original was `expand_merged`, which joins a found consolidated memory to its sources by lineage. That join can only surface originals whose consolidated parent already ranked in primary search. If consolidation summarized away a detail, a query matching that detail would not rank the parent, and the original became unrecallable by vector search. There was no independent vector path to archived content.
+
+### Added
+- **Tier-2 archived vector index.** Archived memories now keep their vectors in a separate index (`embed_vec_arch` / `embed_meta_arch`) instead of being deleted. It is deliberately separate from `embed_vec`: primary KNN over-fetches `k = limit*3` and post-filters status, so mixing the archived bulk (typically most of the corpus) into the primary index would crowd out active hits before the filter ran. A separate index keeps primary search active-only with zero regression.
+- **`search_vec_archived()`** on the SQLite store: KNN over the archived index, always `status='archived'`, with the same project/subcategory/layer/type/valid filters as primary vec search.
+- **`expand_merged` now runs a real tier-2 vector pass.** Alongside the lineage join, it KNN-searches the archived index with the query embedding and returns matching originals under a new `tier2_recall` key, deduped against primary results and `merged_from`. Archived originals are reachable even when their consolidated parent did not rank.
+- **`reindex_archived()`** (CLI `mnemos reindex-archived`): backfill the archived index by embedding every archived memory that lacks an archived-index vector. Idempotent.
+- `tests/test_v107_tier2.py`.
+
+### Changed
+- **Consolidation moves vectors instead of deleting them.** `cleanup_orphan_vectors` now moves an archived memory's vector from the active index into the archived index, and only deletes a vector outright when the memory row no longer exists at all (a hard delete). Primary search is unaffected: it still queries `embed_vec` (active only).
+
 ## [10.6.0] - 2026-06-10 (Namespace integrity + stale-vector detection)
 
 Fixes from a fresh-eyes review of the whole engine. Two of these were silent-divergence bugs in production; the worst one was eating consolidated memories.
