@@ -139,6 +139,7 @@ def cmd_remediate_oversized(mnemos, args):
     result = mnemos.remediate_oversized(
         min_size=args.min_size, max_size=args.max_size,
         dry_run=args.dry_run, limit=args.limit,
+        include_archived=args.include_archived,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
@@ -346,6 +347,8 @@ def main(argv=None):
     p.add_argument("--limit", type=int, default=None, help="Process at most N memories")
     p.add_argument("--dry-run", action="store_true",
                    help="Report what would be split without changing anything")
+    p.add_argument("--include-archived", action="store_true",
+                   help="Also split archived (tier-2) memories; children stay archived")
     p.set_defaults(fn=cmd_remediate_oversized)
 
     # doctor

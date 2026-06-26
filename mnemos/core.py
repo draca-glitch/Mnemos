@@ -239,7 +239,8 @@ class Mnemos:
             "layer": layer,
         }
 
-    def remediate_oversized(self, min_size=4000, max_size=None, dry_run=False, limit=None):
+    def remediate_oversized(self, min_size=4000, max_size=None, dry_run=False, limit=None,
+                            include_archived=False):
         """Split existing oversized active memories into atomic sibling memories.
 
         For each active, non-consolidation_lock memory in this namespace whose
@@ -263,8 +264,9 @@ class Mnemos:
             clause += " AND length(content) <= ?"
             params.append(max_size)
         params.append(self.namespace)
+        status_clause = "status IN ('active','archived')" if include_archived else "status='active'"
         rows = conn.execute(
-            f"SELECT id FROM memories WHERE status='active' AND consolidation_lock=0 "
+            f"SELECT id FROM memories WHERE {status_clause} AND consolidation_lock=0 "
             f"AND {clause} AND namespace=? ORDER BY length(content) DESC",
             params,
         ).fetchall()
@@ -325,12 +327,24 @@ class Mnemos:
                                 l.get("relation", "related"),
                                 l.get("strength", 0.5),
                             )
-                    self.store.delete_memory(oid, hard=False)
-                    if hasattr(self.store, "move_embedding_to_archive"):
-                        try:
-                            self.store.move_embedding_to_archive(oid)
-                        except Exception:
-                            pass
+                    if mem.status == "active":
+                        self.store.delete_memory(oid, hard=False)
+                        if hasattr(self.store, "move_embedding_to_archive"):
+                            try:
+                                self.store.move_embedding_to_archive(oid)
+                            except Exception:
+                                pass
+                    else:
+                        # Archived original (tier-2): keep it as the lineage
+                        # anchor; archive the children too so active search is
+                        # unaffected and tier-2 gains sharp per-topic vectors.
+                        for cid in child_ids:
+                            self.store.delete_memory(cid, hard=False)
+                            if hasattr(self.store, "move_embedding_to_archive"):
+                                try:
+                                    self.store.move_embedding_to_archive(cid)
+                                except Exception:
+                                    pass
                     summary["split"] += 1
                     summary["children_created"] += len(child_ids)
                     summary["archived"] += 1

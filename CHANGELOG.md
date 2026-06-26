@@ -4,6 +4,11 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.9.1] - 2026-06-27 (remediate-oversized: --include-archived)
+
+### Added
+- `mnemos remediate-oversized --include-archived`: extends the flat backfill to archived (tier-2) memories. Archived originals are kept as lineage anchors; their split children are also archived and embedded into the tier-2 index, never promoted into active search. Used to atomize the archived oversized backlog.
+
 ## [10.9.0] - 2026-06-26 (Topic-sort: oversized memories into coherent atomic sub-memories)
 
 The flat size-guard splits a blob into in-order pages. For a sprawling merged catch-all (e.g. a 302k personal memory mixing eight unrelated subjects), pages still mix topics and embed muddily. v10.9.0 adds topic-aware splitting: a router (an LLM) assigns each CML block to a topic, and the same lossless mechanical placement groups them so each resulting memory is about one thing, which embeds to a sharp, retrievable vector.
