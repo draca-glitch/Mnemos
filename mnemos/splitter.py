@@ -130,3 +130,81 @@ def split_is_lossless(original, chunks):
 def needs_split(content, threshold=None):
     threshold = SPLIT_THRESHOLD if threshold is None else threshold
     return bool(content) and len(content) > threshold
+
+
+def split_preserves_all_lines(original, chunks):
+    """True iff every non-blank line of `original` appears across `chunks`
+    exactly once, ignoring order. This is the lossless invariant for a
+    TOPIC-SORTED split, which deliberately reorders blocks (so the stricter
+    in-order split_is_lossless does not apply). Multiset equality: nothing
+    dropped, nothing duplicated, nothing paraphrased.
+    """
+    from collections import Counter
+    return Counter(_nonblank_lines(original)) == Counter(
+        ln for c in chunks for ln in _nonblank_lines(c)
+    )
+
+
+def topic_sort(content, propose_fn, threshold=None, target=None):
+    """Sort content into topically coherent atomic chunks, losslessly.
+
+    Splits content into CML blocks, then calls propose_fn(blocks) where
+    `blocks` is a list of block strings. The router (typically an LLM such as
+    Opus) returns a list of topic ids, one per block, in block order. The
+    router ONLY routes; it never rewrites content. Blocks are then grouped by
+    topic (preserving first-seen topic order and within-topic block order),
+    and each topic becomes one chunk, flat-split further if it still exceeds
+    target. Returns a list of (topic_id, chunk_text).
+
+    Safety: if the router is unavailable, returns a malformed assignment, or
+    the result is not a perfect lossless cover of the original lines, this
+    falls back to the plain order-preserving split_content. A fact is never
+    dropped, duplicated, or paraphrased, verified by split_preserves_all_lines.
+    """
+    threshold = SPLIT_THRESHOLD if threshold is None else threshold
+    target = SPLIT_TARGET if target is None else target
+    if not content or len(content) <= threshold:
+        return [(0, content if content is not None else "")]
+
+    block_lists = _blocks(content)
+    blocks = ["\n".join(b) for b in block_lists]
+
+    assign = None
+    try:
+        assign = propose_fn(blocks)
+    except Exception:
+        assign = None
+
+    def _flat_fallback():
+        return [(0, c) for c in split_content(content, threshold, target)]
+
+    if not (isinstance(assign, list) and len(assign) == len(blocks)
+            and all(isinstance(a, int) for a in assign)):
+        return _flat_fallback()
+
+    order = []
+    groups = {}
+    for blk, tid in zip(blocks, assign):
+        if tid not in groups:
+            groups[tid] = []
+            order.append(tid)
+        groups[tid].append(blk)
+
+    result = []
+    for tid in order:
+        # Join blocks verbatim. NO .strip(): stripping would alter a content
+        # line that carries trailing whitespace if it lands at the tail of a
+        # topic, breaking the lossless multiset check and silently forcing the
+        # flat fallback. Blocks already have no blank edges (see _blocks).
+        text = "\n\n".join(groups[tid])
+        if len(text) <= target:
+            if text:
+                result.append((tid, text))
+        else:
+            for part in split_content(text, threshold=target, target=target):
+                if part:
+                    result.append((tid, part))
+
+    if not result or not split_preserves_all_lines(content, [c for _, c in result]):
+        return _flat_fallback()
+    return result

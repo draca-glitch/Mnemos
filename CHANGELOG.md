@@ -4,6 +4,22 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.9.0] - 2026-06-26 (Topic-sort: oversized memories into coherent atomic sub-memories)
+
+The flat size-guard splits a blob into in-order pages. For a sprawling merged catch-all (e.g. a 302k personal memory mixing eight unrelated subjects), pages still mix topics and embed muddily. v10.9.0 adds topic-aware splitting: a router (an LLM) assigns each CML block to a topic, and the same lossless mechanical placement groups them so each resulting memory is about one thing, which embeds to a sharp, retrievable vector.
+
+### Added
+- **`topic_sort(content, propose_fn)`** in `mnemos/splitter.py`: groups blocks by router-assigned topic, sub-splits oversized topics, and gates on `split_preserves_all_lines` (multiset losslessness, since topic-sorting reorders). The router only routes; content is never rewritten. Falls back to flat `split_content` if the routing is unavailable or not a perfect cover.
+- **`split_preserves_all_lines`**: order-independent lossless check for reordered splits.
+- **`scripts/mnemos_sortkit.py`** (`dump` / `place` / `apply`): one-off kit to topic-sort oversized memories. The router (Opus) supplies a block-to-topic grouping; the kit places verbatim, writes a temp result, and `apply` stores each topic as an atomic child with a hierarchical subcategory path (e.g. `personal/janne-dementia`), sibling-linked, archiving the original.
+- Topic-sort tests plus a trailing-whitespace regression in `tests/test_splitter.py`.
+
+### Fixed
+- `topic_sort` no longer `.strip()`s a topic's joined text, which could alter a content line carrying trailing whitespace at a topic tail and silently force the flat fallback.
+
+### Migration applied (Epsilon prod)
+- The 4 active giant memories (302k/82k/82k/66k) topic-sorted into 248 atomic sub-memories across coherent subcategory paths, all lossless, all embedded, originals archived.
+
 ## [10.8.0] - 2026-06-26 (Size-guard splitter: atomic memories)
 
 Memories could grow without bound. A handful had ballooned to tens or hundreds of thousands of characters (worst case 302k), which both pollutes an agent's context when loaded and embeds to a blurry averaged vector that retrieval can barely rank. There was no size limit anywhere, and the merge prompt even said "do not truncate".
