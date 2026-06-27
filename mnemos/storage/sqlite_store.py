@@ -113,6 +113,24 @@ class SQLiteStore(MnemosStore):
                 pass
             self._conn = None
 
+    def backup(self, dest_path: str) -> str:
+        """Write a WAL-safe, consistent standalone snapshot of the DB.
+
+        Uses VACUUM INTO, which captures the full committed state (including
+        rows still resident in an un-checkpointed WAL) into a single
+        defragmented file that needs no -wal/-shm sidecar to read. Safe while
+        the DB is live. A raw file copy of a WAL-mode .db is NOT safe: it can
+        omit WAL-resident rows and, when restored next to a stale -wal/-shm,
+        replays mismatched frames and corrupts the btree (the failure mode that
+        took out prod on 2026-06-27). Always use this instead of `cp`.
+        """
+        conn = self._get_conn()
+        conn.commit()  # VACUUM requires no open transaction
+        if os.path.exists(dest_path):
+            os.remove(dest_path)  # VACUUM INTO refuses to overwrite
+        conn.execute("VACUUM INTO ?", (dest_path,))
+        return dest_path
+
     # --- Schema ---
 
     def init_schema(self):

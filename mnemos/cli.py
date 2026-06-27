@@ -144,6 +144,14 @@ def cmd_remediate_oversized(mnemos, args):
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
+def cmd_backup(mnemos, args):
+    if not hasattr(mnemos.store, "backup"):
+        print("backup requires the SQLite backend")
+        return
+    dest = mnemos.store.backup(args.dest)
+    print(f"WAL-safe snapshot written: {dest}")
+
+
 def cmd_doctor(mnemos, args):
     report = mnemos.doctor(migrate=getattr(args, "migrate", False))
     if args.json:
@@ -352,6 +360,12 @@ def main(argv=None):
     p.add_argument("--hard", action="store_true",
                    help="Sentence-split over-target single lines (last resort for un-line-splittable blobs)")
     p.set_defaults(fn=cmd_remediate_oversized)
+
+    # backup
+    p = sub.add_parser("backup",
+                       help="Write a WAL-safe consistent snapshot of the DB (use instead of `cp` on a live DB)")
+    p.add_argument("dest", help="Destination path for the snapshot")
+    p.set_defaults(fn=cmd_backup)
 
     # doctor
     p = sub.add_parser("doctor", help="Health check (and optional self-repair of schema drift)")

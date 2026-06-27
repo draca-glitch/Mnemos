@@ -1467,6 +1467,21 @@ class Mnemos:
             "migrations_applied": [],
         }
 
+        # --- Integrity check (FIRST, before any read that assumes a sane btree) ---
+        # Catches page/btree corruption, e.g. from an unsafe file copy of a live
+        # WAL-mode DB. Without this, doctor reported "healthy" on a malformed DB
+        # and the damage only surfaced as a "database disk image is malformed"
+        # blow-up at search time. quick_check is much faster than the full
+        # integrity_check on a large corpus and still catches this class.
+        try:
+            ic = conn.execute("PRAGMA quick_check").fetchone()[0]
+            if ic == "ok":
+                report["checks"].append("Integrity check passed (quick_check)")
+            else:
+                report["issues"].append(f"Integrity check FAILED: {ic}")
+        except Exception as e:
+            report["issues"].append(f"Integrity check error: {e}")
+
         # --- Schema drift detection ---
         cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
         required = {"id", "project", "content", "type", "layer", "subcategory",
@@ -1490,12 +1505,14 @@ class Mnemos:
 
         # Backup before any migrations
         if migrate and (missing_cols or missing_tables) and hasattr(self.store, "db_path"):
-            import shutil, time
+            import time
             src = self.store.db_path
             ts = time.strftime("%Y%m%d-%H%M%S")
             backup = f"{src}.bak-pre-doctor-migrate-{ts}"
             try:
-                shutil.copy2(src, backup)
+                # WAL-safe snapshot, never a raw copy: copying a live WAL-mode
+                # .db without its -wal/-shm is exactly what corrupted prod.
+                self.store.backup(backup)
                 report["backup"] = backup
             except Exception as e:
                 report["issues"].append(f"Backup failed; aborting migrations: {e}")

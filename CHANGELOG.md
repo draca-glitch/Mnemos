@@ -4,6 +4,17 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.10.0] - 2026-06-27 (WAL-safe backup + doctor integrity check)
+
+A live, WAL-mode `memory.db` corrupted in prod during the v10.8/10.9 split-backlog work: `btreeInitPage` error 11, rowids out of order, concentrated in the newest pages. Root cause was NOT the split logic (it is lossless and all writes go through SQLite) but unsafe file-level handling of a live WAL DB: the file was copied/restored without checkpointing its `-wal`/`-shm` (doctor used `shutil.copy2`, compounded by an operator `cp` cascade), so a restored snapshot replayed mismatched WAL frames and tore the btree. Worse, doctor never ran an integrity check, so it reported "healthy" on a malformed DB and the damage only surfaced as a "database disk image is malformed" blow-up at search time.
+
+### Added
+- **`SQLiteStore.backup(dest)`** and **`mnemos backup <dest>`**: WAL-safe hot backup via `VACUUM INTO`. Captures the full committed state (including rows still resident in an un-checkpointed WAL) into a single defragmented standalone file that needs no `-wal`/`-shm` sidecar, and is safe to run while the DB is live. Use this instead of `cp` on a live DB.
+- `doctor()` runs `PRAGMA quick_check` first, before any read that assumes a sane btree, and reports page/btree corruption under issues. This corruption class is now caught at `mnemos doctor` time instead of surfacing as a malformed-image error at search time.
+
+### Fixed
+- `doctor()`'s pre-migration backup no longer uses `shutil.copy2` (an unsafe raw copy of a live WAL `.db`); it uses the new `VACUUM INTO` snapshot, so the safety backup can never itself become the corruption vector.
+
 ## [10.9.2] - 2026-06-27 (Sentence-split fallback, embedder-aligned target, cascade fix)
 
 ### Added
