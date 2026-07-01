@@ -151,7 +151,11 @@ def load_embeddings(conn, project=None):
     mem_by_id = {m["id"]: dict(m) for m in memories}
     active_ids = set(mem_by_id.keys())
 
-    # Filter out evergreen, high-importance, and consolidation-locked for merging
+    # Filter out evergreen, high-importance, decision-type, and consolidation-locked
+    # from merging. Decisions are authoritative records; merging blends and compresses
+    # them (lossy) then archives the originals, so they are woven (linked) but never
+    # merged, per the small-memories-that-link design. They stay in all_embeddings so
+    # weave/contradict still reach them.
     skip_ids = set()
     for mid, m in mem_by_id.items():
         if m.get("importance", 5) >= SKIP_IMPORTANCE:
@@ -160,6 +164,8 @@ def load_embeddings(conn, project=None):
         if "evergreen" in tags:
             skip_ids.add(mid)
         if m.get("consolidation_lock"):
+            skip_ids.add(mid)
+        if m.get("type") == "decision":
             skip_ids.add(mid)
 
     # Load embeddings from vec tables

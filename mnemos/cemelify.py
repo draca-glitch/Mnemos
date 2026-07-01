@@ -80,16 +80,14 @@ def cemelify(content: str, max_tokens: int = 512) -> str:
 
 
 def _needs_cemelify(content: Optional[str]) -> bool:
-    """Phase 0.5 filter: candidate when content lacks a CML prefix on its
-    first line OR exceeds 800 chars (likely prose that slipped through)."""
+    """Phase 0.5 filter: candidate only when content lacks a CML prefix on its
+    first line. Idempotent: content already carrying a CML prefix is left as-is.
+    Re-rewriting already-CML memories risks corrupting preserved facts (number/ID
+    drift) for no normalization gain."""
     if not content:
         return False
     first_line = content.strip().split("\n")[0]
     starts_with_cml = any(
         first_line.startswith(p) for p in ("F:", "D:", "C:", "L:", "P:", "W:")
     )
-    if not starts_with_cml:
-        return True
-    if len(content) > 800:
-        return True
-    return False
+    return not starts_with_cml

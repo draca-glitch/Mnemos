@@ -72,9 +72,12 @@ class TestNeedsCemelify:
     def test_short_cml_is_not_candidate(self):
         assert _needs_cemelify("F: mnemos uses sqlite-vec") is False
 
-    def test_long_cml_triggers_anyway(self):
-        long_cml = "F: " + ("x " * 500)  # > 800 chars
-        assert _needs_cemelify(long_cml) is True
+    def test_long_cml_is_idempotent_not_recemelified(self):
+        # Idempotent (2026-07-01): content already carrying a CML prefix is left
+        # as-is regardless of length. Re-rewriting already-CML memories on a local
+        # model corrupts exact strings for no gain, so length no longer re-triggers.
+        long_cml = "F: " + ("x " * 500)  # > 800 chars but already CML
+        assert _needs_cemelify(long_cml) is False
 
     def test_empty_or_none(self):
         assert _needs_cemelify("") is False

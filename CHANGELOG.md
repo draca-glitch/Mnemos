@@ -4,6 +4,18 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.11.0] - 2026-07-01 (One-fact-per-line merge, idempotent cemelify, decision merge-protection)
+
+Consolidation overhaul from a live session moving the Nyx cycle onto local inference. The single-line CML format was found to be the root cause of unsplittable oversized memories and of fact loss during merge.
+
+### Changed
+- **MERGE emits one fact per line** instead of dense single-line packing. The old prompt ("chain facts densely on one line when topic is shared, pack more facts per line") produced single-line blobs that the line-based splitter could not cut, so same-topic merges became unsplittable oversized memories. One fact per line is splittable and atomic-ready (child extraction becomes a newline split, not an LLM pass), and it preserves MORE: bench went 93.6 -> 95.2% unique-fact preservation, because dense packing was itself dropping facts.
+- **Phase 0.5 Cemelify is idempotent.** `_needs_cemelify` no longer re-triggers on already-CML content over 800 chars; a memory whose first line carries a CML prefix is left as-is. Re-rewriting already-CML memories on a weaker local model corrupts exact strings (observed: a benchmark score `56/56` rewritten to `56/64`) for zero normalization gain.
+- **Decisions are excluded from Phase 2 merge.** `type='decision'` memories join evergreen, `importance >= SKIP_IMPORTANCE`, and `consolidation_lock` in the merge skip set. They are still woven and contradiction-scanned (they remain in `all_embeddings`), but are never blended and archived, since merging compresses authoritative records lossily.
+
+### Added
+- **`MNEMOS_NYX_CEMELIFY` env flag** (default `1`). Set `0` to skip the Phase 0.5 cemelify pass entirely, for corpora whose non-CML population is document-shaped content that should not be compressed to a single line.
+
 ## [10.10.1] - 2026-06-28 (Audit hardening: busy_timeout, atomic backup, richer doctor)
 
 Post-v10.10.0 read-through audit fixes, same data-safety theme.

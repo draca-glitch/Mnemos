@@ -49,7 +49,7 @@ CONFLICTS: most recent value wins, use △ to mark changed state and briefly not
 
 CML notation. Prefixes: D: decision, C: contact, F: config/fact, L: learning, P: preference, W: warning. Symbols: → ↔ ← ∵ ∴ △ ⚠ @ ✓ ✗ ~ ∅ … ; > #N (∵=because, ∴=therefore, ~=approximate/uncertain, …=continuation)
 
-Use ; to chain facts densely on one line when topic is shared. Newline for distinct topics. Pack more facts per line than per memory.
+Put each distinct fact on its OWN line, prefixed with its CML prefix. Do NOT chain distinct facts onto one line; one fact per line keeps the merged memory atomic and splittable. Collapse only exact duplicates. Use ; only to attach a tightly-bound qualifier to the same fact (e.g. a value and its unit), never to pack separate facts together.
 
 Output ONLY the CML text. No explanations, no fencing, no preamble, no self-commentary."""
 

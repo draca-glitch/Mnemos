@@ -14,6 +14,7 @@ Usage:
 """
 
 import json
+import os
 import sqlite3
 import time
 
@@ -380,9 +381,15 @@ def run_nyx_cycle(
             # Phase 0.5: Cemelify (v10.4.0). Rewrites prose-form active
             # memories into CML before clustering, so Dedup operates on
             # canonical content. Skips consolidation_lock=1 memories.
-            phase_stats["phase0_5"] = _phase_cemelify(
-                conn, store, mem_by_id, execute=execute
-            )
+            # Opt-out: MNEMOS_NYX_CEMELIFY=0 skips it. Rewriting already-stored
+            # memories every cycle can drift facts on weaker local models, and the
+            # non-CML population is often document-shaped content best left intact.
+            if os.environ.get("MNEMOS_NYX_CEMELIFY", "1") != "0":
+                phase_stats["phase0_5"] = _phase_cemelify(
+                    conn, store, mem_by_id, execute=execute
+                )
+            else:
+                log("Phase 0.5 (Cemelify): skipped (MNEMOS_NYX_CEMELIFY=0)")
 
             if 2 in phases:
                 phase_stats["phase2"] = phase_dedup(
