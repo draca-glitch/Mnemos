@@ -47,7 +47,7 @@ SIZE: output should be shorter than the concatenated inputs (prose compresses we
 
 CONFLICTS: most recent value wins, use △ to mark changed state and briefly note prior value.
 
-CML notation. Prefixes: D: decision, C: contact, F: config/fact, L: learning, P: preference, W: warning. Symbols: → ↔ ← ∵ ∴ △ ⚠ @ ✓ ✗ ~ ∅ … ; > #N (∵=because, ∴=therefore, ~=approximate/uncertain, …=continuation)
+CML notation. Prefixes: D: decision, C: contact, F: config/fact, L: learning, P: preference, W: warning, R: restriction. Symbols: → ↔ ← ∵ ∴ △ ⚠ @ ✓ ✗ ~ ∅ … ; > #N (∵=because, ∴=therefore, ~=approximate/uncertain, …=continuation)
 
 Put each distinct fact on its OWN line, prefixed with its CML prefix. Do NOT chain distinct facts onto one line; one fact per line keeps the merged memory atomic and splittable. Collapse only exact duplicates. Use ; only to attach a tightly-bound qualifier to the same fact (e.g. a value and its unit), never to pack separate facts together.
 
@@ -82,7 +82,7 @@ SIZE: output should be shorter than the concatenated inputs (redundancy compress
 
 CONFLICTS: most recent value wins, briefly note the prior value.
 
-Write in natural clear English prose. Do NOT use CML prefixes (D:, C:, F:, L:, P:, W:) or relation symbols (→, ∵, ∴, △, ⚠, ↔). Output ONLY the prose text. No explanations, no fencing, no preamble, no self-commentary."""
+Write in natural clear English prose. Do NOT use CML prefixes (D:, C:, F:, L:, P:, W:, R:) or relation symbols (→, ∵, ∴, △, ⚠, ↔). Output ONLY the prose text. No explanations, no fencing, no preamble, no self-commentary."""
 
 # --- Phase 2: Thematic Weaving ---
 

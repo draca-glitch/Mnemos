@@ -46,7 +46,8 @@ them proactively.
 
 ### Format: CML (Compressed Memory Language)
 - Type prefix on the first line: `D:` decision, `F:` fact/config,
-  `L:` learning, `P:` preference, `C:` contact, `W:` warning
+  `L:` learning, `P:` preference, `C:` contact, `W:` warning,
+  `R:` restriction
 - Relation symbols: `→` leads to / produces, `∵` because, `∴` therefore,
   `@` at / in context of, `✓` confirmed, `✗` wrong, `⚠` caveat,
   `△` changed from, `↔` mutual relation, `#N` reference memory #N

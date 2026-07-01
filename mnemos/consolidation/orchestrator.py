@@ -216,7 +216,7 @@ def cleanup_stale_links(conn, execute: bool = True):
 def _phase_cemelify(conn, store, mem_by_id, execute: bool = False):
     """Rewrite non-CML or over-long active memories into CML form via LLM.
 
-    Candidates: content does not start with a CML prefix (F:/D:/C:/L:/P:/W:),
+    Candidates: content does not start with a CML prefix (F:/D:/C:/L:/P:/W:/R:),
     OR content length > 800 chars. Skips memories with consolidation_lock=1
     (prose-protection convention, matches Phase 2 Dedup semantics).
 

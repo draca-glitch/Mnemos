@@ -6,7 +6,51 @@ from mnemos.splitter import (
     split_content, split_is_lossless, needs_split, _nonblank_lines,
     topic_sort, split_preserves_all_lines,
     split_preserves_all_sentences, _split_long_line,
+    explode_cml_chain, _sep_free,
 )
+
+
+def test_explode_splits_multiple_statements():
+    out = explode_cml_chain("F:aaa; D:bbb; W:ccc")
+    assert out == "F:aaa\nD:bbb\nW:ccc"
+    assert _sep_free(out) == _sep_free("F:aaa; D:bbb; W:ccc")
+
+
+def test_explode_restriction_prefix():
+    out = explode_cml_chain("R:max 4 breakpoints; C:Layla; W:never share")
+    assert out.split("\n") == ["R:max 4 breakpoints", "C:Layla", "W:never share"]
+
+
+def test_explode_windows_drive_letter_not_split():
+    # Regression: C:\ and D:\ are Windows paths, NOT Contact/Decision prefixes.
+    blob = "F:migrated from C:\\Video\\Downloads to D:\\Backup; D:keep the archive"
+    out = explode_cml_chain(blob)
+    assert out == "F:migrated from C:\\Video\\Downloads to D:\\Backup\nD:keep the archive"
+    assert "C:\\Video" in out and "D:\\Backup" in out
+
+
+def test_explode_url_slash_not_split():
+    out = explode_cml_chain("F:see D:/mnt/data for the dump; W:read only")
+    assert out == "F:see D:/mnt/data for the dump\nW:read only"
+
+
+def test_explode_pdf_prefix_not_split():
+    out = explode_cml_chain("F:uses PDF: export; D:ship it")
+    assert out == "F:uses PDF: export\nD:ship it"
+
+
+def test_explode_intra_fact_semicolon_preserved():
+    assert explode_cml_chain("F:qwen (a; b; c); W:watch out") == "F:qwen (a; b; c)\nW:watch out"
+
+
+def test_explode_single_statement_unchanged():
+    c = "F:one fact only; with a sub-clause"
+    assert explode_cml_chain(c) == c
+
+
+def test_explode_already_multiline_unchanged():
+    c = "F:x\nD:y"
+    assert explode_cml_chain(c) == c
 
 
 def _cml_blob(n_facts, prefix="F"):

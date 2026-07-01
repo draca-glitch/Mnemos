@@ -4,6 +4,21 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.12.0] - 2026-07-01 (R: restriction prefix, cemelify one-fact-per-line, mechanical CML exploder)
+
+Follow-on to 10.11.0: that release fixed the MERGE prompt to emit one fact per line, but the store-time and Phase 0.5 `cemelify` prompt still instructed "a single compact CML line", so it kept regenerating the unsplittable single-line blobs. This release fixes cemelify at the source, adds a mechanical (no-LLM) exploder for boxes where the MERGE path is unavailable, and adds a distinct `R:` restriction prefix.
+
+### Added
+- **`R:` (Restriction) CML prefix** for hard rules and limits, kept distinct from `W:` (Warning, a caution flag); a rule is not a warning. Wired into every prefix-set site in one pass: the cemelify prompt, the MERGE prompt, the `memory_store` MCP tool description, `core.CML_TYPE_PREFIXES`, `cemelify._needs_cemelify`, the splitter statement-boundary regex, and the CML docs (`docs/cml.md`, `docs/agent-instructions.md`).
+- **`splitter.explode_cml_chain()`** reformats one physical line of prefix-chained CML into one-fact-per-line CML, stdlib only (no LLM, no DB). It splits before each canonical prefix that starts a new statement; a `;` not followed by a prefix stays intra-fact, so a single fact is never shredded, and a prefix followed by a path separator (a Windows drive letter `C:\` or a `D:/` URL) is not a boundary, so file paths mid-text are not false-split. Loss-guarded: returns the input unchanged unless the separator-free content is preserved exactly. For repairing legacy single-line memories on deployments where the LLM MERGE path is disabled.
+- **`scripts/split_single_line_cml.py`** applies `explode_cml_chain` across a whole memory DB: scans for single-line multi-statement CML memories, dry-runs by default, and on `--apply` rewrites each through the Mnemos update API so FTS and vector re-sync. For repairing existing memories on machines where the LLM MERGE path is unavailable.
+
+### Changed
+- **cemelify emits one fact per line** instead of a single compact CML line. This is the sibling of the 10.11.0 MERGE fix: with MERGE corrected but cemelify still packing one line, the store-time hook and Phase 0.5 kept producing unsplittable single-line blobs.
+
+### Fixed
+- **cemelify `C:` legend corrected to Contact.** The cemelify prompt uniquely defined `C:` as "Constraint or Caveat" while every other site (MCP tool description, MERGE prompt, docs, `core.CML_TYPE_PREFIXES`) defines `C:` as Contact. Verified against the live corpus before changing: 48 of 49 existing `C:` statements are contacts, so this aligns the outlier with no retroactive reinterpretation. Constraints now have their own `R:` prefix.
+
 ## [10.11.0] - 2026-07-01 (One-fact-per-line merge, idempotent cemelify, decision merge-protection)
 
 Consolidation overhaul from a live session moving the Nyx cycle onto local inference. The single-line CML format was found to be the root cause of unsplittable oversized memories and of fact loss during merge.

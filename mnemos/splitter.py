@@ -127,6 +127,54 @@ def split_content(content, threshold=None, target=None, hard=False):
     return chunks or [content]
 
 
+# A new CML statement begins at a canonical prefix (F:/D:/C:/L:/P:/W:/R:) that is
+# neither glued to a preceding alphanumeric (so "F:" inside "PDF:" is not a
+# boundary) nor immediately followed by a path separator (so a Windows drive
+# letter "C:\" or a "D:/path" URL is not a boundary either). Used to explode one
+# physical line of prefix-chained CML into one line per statement, mechanically,
+# for memories that predate the one-fact-per-line cemelify prompt (and where no
+# LLM is available to rewrite).
+_CML_STATEMENT_BOUNDARY = re.compile(r"(?<![A-Za-z0-9])(?=[FDCLPWR]:(?![\\/]))")
+
+
+def _sep_free(text):
+    """Content with separators (whitespace, ';', '.') stripped. Two CML
+    renderings of the same facts differ only in separators, so this is the
+    invariant the mechanical exploder must preserve."""
+    return re.sub(r"[\s;.]+", "", text or "")
+
+
+def explode_cml_chain(content):
+    """Reformat one single-line, prefix-chained CML blob into multi-line
+    one-fact-per-line CML, mechanically (stdlib only, no LLM, no DB).
+
+    Splits BEFORE each canonical prefix (F:/D:/C:/L:/P:/W:/R:) that starts a new
+    statement. A ';' not followed by such a prefix is intra-fact sub-clause
+    chaining and stays put, so a single fact is never shredded.
+
+    Loss-guarded: the only characters that may change are separators. If the
+    separator-free content of the result does not equal the input's, or the
+    input is empty, already multi-line, or yields fewer than two statements, the
+    input is returned unchanged. It never drops or paraphrases a fact; an
+    ambiguous blob is left as-is for the LLM path. Note it does not prove split
+    PLACEMENT (a spurious interior prefix could add a break), so spot-check
+    results on small sets.
+    """
+    if not content or "\n" in content:
+        return content
+    parts = []
+    for seg in _CML_STATEMENT_BOUNDARY.split(content):
+        seg = re.sub(r";+\s*$", "", seg.strip()).strip()
+        if seg:
+            parts.append(seg)
+    if len(parts) < 2:
+        return content
+    exploded = "\n".join(parts)
+    if _sep_free(exploded) != _sep_free(content):
+        return content
+    return exploded
+
+
 def _nonblank_lines(text):
     return [ln for ln in (text or "").split("\n") if ln.strip()]
 

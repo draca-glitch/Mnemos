@@ -33,7 +33,7 @@ from .constants import (
 )
 
 
-CML_TYPE_PREFIXES = ("D:", "C:", "F:", "L:", "P:", "W:")
+CML_TYPE_PREFIXES = ("D:", "C:", "F:", "L:", "P:", "W:", "R:")
 
 
 def _sigmoid(x):
@@ -412,7 +412,7 @@ class Mnemos:
                 "methods": {"fts"}, "fts_similarity": d["similarity"],
             }
 
-        # 2) CML subject conflict. Same CML prefix (D:/C:/F:/L:/P:/W:)
+        # 2) CML subject conflict. Same CML prefix (D:/C:/F:/L:/P:/W:/R:)
         # and same subject token in the same project is a strong dedup
         # signal that FTS can miss when the subject is a short, rare token
         # (FTS5 tokenizers drop 1-2 char words, and BM25 under-weights

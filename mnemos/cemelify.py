@@ -8,7 +8,7 @@ Used in two places:
      persistence, so memories land already in CML form.
   2. Phase 0.5 of the Nyx cycle (on by default when an LLM is configured):
      scans active memories that either don't start with a CML prefix
-     (F:/D:/C:/L:/P:/W:) or are longer than 800 chars, and rewrites
+     (F:/D:/C:/L:/P:/W:/R:) or are longer than 800 chars, and rewrites
      each in place.
 
 The LLM call goes through mnemos.consolidation.llm.chat(), so all the env
@@ -26,18 +26,22 @@ from typing import Optional
 
 CML_CEMELIFY_SYSTEM = (
     "You are a CML (Compressed Memory Language) cemelifier. Rewrite the "
-    "user's content into a single compact CML line using one of the canonical "
-    "prefixes:\n"
+    "user's content into compact CML: one fact per line, each line starting "
+    "with a canonical prefix. When the source holds several distinct facts, "
+    "emit several lines separated by newlines; never collapse them onto one "
+    "line. Within a single line you may chain tightly related sub-clauses "
+    "with ';'.\n"
     "  F: Fact (verifiable atomic claim)\n"
     "  D: Decision\n"
-    "  C: Constraint or Caveat\n"
-    "  L: Lesson or Learning\n"
+    "  C: Contact\n"
+    "  L: Learning\n"
     "  P: Preference\n"
     "  W: Warning\n"
+    "  R: Restriction (hard rule or limit)\n"
     "Preserve every concrete fact, number, name, and identifier from the "
     "source. Drop filler, redundant context, and meta-commentary. If the "
     "source already starts with a CML prefix, return it unchanged. Reply "
-    "with the CML line only, no explanation, no quoting."
+    "with the CML lines only, no explanation, no quoting."
 )
 
 
@@ -88,6 +92,6 @@ def _needs_cemelify(content: Optional[str]) -> bool:
         return False
     first_line = content.strip().split("\n")[0]
     starts_with_cml = any(
-        first_line.startswith(p) for p in ("F:", "D:", "C:", "L:", "P:", "W:")
+        first_line.startswith(p) for p in ("F:", "D:", "C:", "L:", "P:", "W:", "R:")
     )
     return not starts_with_cml

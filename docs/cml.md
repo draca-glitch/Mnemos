@@ -28,6 +28,7 @@ So Mnemos uses **CML (Condensed Memory Language)** as a soft convention for writ
 | `L:` | Learning (insight, lesson, pattern observed) |
 | `P:` | Preference / pattern (what the user likes, prefers, repeatedly does) |
 | `W:` | Warning (safety, gotcha, risk) |
+| `R:` | Restriction (hard rule or limit) |
 
 ## Relation symbols
 

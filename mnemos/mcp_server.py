@@ -32,7 +32,7 @@ _STORE_DESC_CML = (
     "Store a new memory. Auto-detects duplicates and contradictions.\n\n"
     "FORMAT GUIDANCE, when to use CML vs prose:\n"
     "  Use CML (Compressed Memory Language) for: facts, decisions, contacts, configs, preferences, warnings. "
-    "CML prefixes: D:(decision) C:(contact) F:(fact) L:(learning) P:(preference) W:(warning). "
+    "CML prefixes: D:(decision) C:(contact) F:(fact) L:(learning) P:(preference) W:(warning) R:(restriction). "
     "Symbols: → ↔ ← ∵ ∴ △ ⚠ @ ✓ ✗ ~ ∅ … ; > #N. Dense, one-line-per-fact chains with ;\n"
     "  Use plain prose for: runbooks with ordered steps, long-form reference documents, code blocks, "
     "creative writing, multi-paragraph narrative. These suffer from CML compression. "
