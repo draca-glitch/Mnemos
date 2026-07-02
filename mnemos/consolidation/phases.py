@@ -482,6 +482,16 @@ def apply_merge(conn, cluster_ids, merged_content, mem_by_id):
                 (str(new_id), mid),
             )
 
+        # Lineage row: get_merged_sources / search(expand_merged=True) read
+        # exclusively from nyx_insights, so without this the primary merge
+        # path produced super-memories with permanently empty merged_from
+        # (tags alone are invisible to the lineage join).
+        conn.execute(
+            "INSERT INTO nyx_insights (memory_id, source_ids, insight_type, consolidation_type) "
+            "VALUES (?, ?, 'merge', 'aggregation')",
+            (new_id, ",".join(str(i) for i in cluster_ids)),
+        )
+
         conn.commit()
         return new_id
     except Exception as e:
@@ -621,6 +631,41 @@ def _log_cluster(cluster, mem_by_id, num):
 # Phase 3: Thematic Weaving
 # =============================================================================
 
+def store_bridge_insight(conn, mid_a, mid_b, insight):
+    """Persist a Phase-3 bridge insight as an active memory WITH its vector.
+
+    Bridges used to be inserted content-only: active, FTS-indexed via
+    trigger, but never embedded, so they stayed vector-invisible forever
+    and showed up as permanently `missing` in embed_status. Embedding is
+    best-effort: on embedder failure the bridge still lands (FTS-only) and
+    `mnemos embed-fill` picks it up later. Returns the new memory id.
+    """
+    tag_str = f"synthesized,nyx-cycle,bridge,src:nyx-{time.strftime('%Y-%m-%d')}"
+    if CML_MODE == "off":
+        content = f"Bridge between memory #{mid_a} and #{mid_b}: {insight}"
+    else:
+        content = f"L: Bridge #{mid_a}↔#{mid_b}: {insight}"
+    conn.execute(
+        "INSERT INTO memories (namespace, project, content, tags, importance, "
+        "type, layer, consolidation_lock) "
+        "VALUES (?, 'personal', ?, ?, 5, 'learning', 'semantic', 1)",
+        (_active_namespace(), content, tag_str),
+    )
+    cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    try:
+        text = prep_memory_text("personal", content, tag_str,
+                                mem_type="learning", layer="semantic")
+        emb = fastembed_embed([text])
+        if emb and emb[0]:
+            store_embeddings(conn, [("memory", cid, text_hash(text), emb[0])],
+                             model=FASTEMBED_MODEL)
+    except Exception as e:
+        log(f"    Warning: bridge #{cid} stored without vector ({e}); "
+            "run `mnemos embed-fill`")
+    conn.commit()
+    return cid
+
+
 def phase_weave(conn, all_embeddings, mem_by_id, is_surge, execute=False):
     """Find cross-category connections. Returns stats dict."""
     stats = {"pairs_evaluated": 0, "links_created": 0, "insights_stored": 0}
@@ -753,18 +798,7 @@ def phase_weave(conn, all_embeddings, mem_by_id, is_surge, execute=False):
 
             # Store bridge insight as a new memory
             if insight:
-                tag_str = f"synthesized,nyx-cycle,bridge,src:nyx-{time.strftime('%Y-%m-%d')}"
-                if CML_MODE == "off":
-                    content = f"Bridge between memory #{mid_a} and #{mid_b}: {insight}"
-                else:
-                    content = f"L: Bridge #{mid_a}↔#{mid_b}: {insight}"
-                conn.execute(
-                    "INSERT INTO memories (namespace, project, content, tags, importance, "
-                    "type, layer, consolidation_lock) "
-                    "VALUES (?, 'personal', ?, ?, 5, 'learning', 'semantic', 1)",
-                    (_active_namespace(), content, tag_str),
-                )
-                conn.commit()
+                store_bridge_insight(conn, mid_a, mid_b, insight)
                 stats["insights_stored"] += 1
                 log(f"    → Insight stored: {insight[:80]}")
 
@@ -891,6 +925,24 @@ def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge, execute=Fa
         classification, explanation = _parse_contradict(result)
 
         if classification == "SUPERSEDED":
+            # Blast-radius guard: the classifier's verdict is derived from
+            # memory content interpolated into the prompt, i.e. from data the
+            # project's own rules treat as untrusted. A steered verdict must
+            # not be able to archive load-bearing memories, so verified and
+            # importance>=9 memories get the link recorded but keep their
+            # status; a human or the owning agent decides.
+            if older.get("verified") or older.get("importance", 5) >= 9:
+                conn.execute(
+                    "INSERT OR IGNORE INTO memory_links "
+                    "(source_id, target_id, relation_type, strength) "
+                    "VALUES (?, ?, 'superseded_by', 0.9)",
+                    (older_id, newer_id),
+                )
+                conn.commit()
+                stats["superseded_skipped"] = stats.get("superseded_skipped", 0) + 1
+                log(f"    → SUPERSEDED verdict on #{older_id} NOT applied "
+                    "(verified/high-importance guard); link recorded only")
+                continue
             # Archive the older memory, link to newer
             conn.execute(
                 "UPDATE memories SET status='archived', "
@@ -1107,8 +1159,10 @@ def _select_nyx_packet(conn, active_memories, embeddings):
         # Recency boost: recently accessed = "on the mind"
         if m.get("last_accessed"):
             try:
-                days_str = f"julianday('now','localtime') - julianday('{m['last_accessed']}')"
-                days = conn.execute(f"SELECT {days_str}").fetchone()[0]
+                days = conn.execute(
+                    "SELECT julianday('now','localtime') - julianday(?)",
+                    (m["last_accessed"],),
+                ).fetchone()[0]
                 score += max(0, 5 - days / 7)
             except Exception:
                 pass
@@ -1121,8 +1175,10 @@ def _select_nyx_packet(conn, active_memories, embeddings):
 
         # New memories boost
         try:
-            days_str = f"julianday('now','localtime') - julianday('{m['created_at']}')"
-            days = conn.execute(f"SELECT {days_str}").fetchone()[0]
+            days = conn.execute(
+                "SELECT julianday('now','localtime') - julianday(?)",
+                (m["created_at"],),
+            ).fetchone()[0]
             if days < 14:
                 score += 3
         except Exception:

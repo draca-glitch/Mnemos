@@ -14,8 +14,11 @@ making Mnemos backend-agnostic.
 """
 
 import math
+import os
 import re
 import sqlite3
+import threading
+from contextlib import contextmanager
 from typing import Optional
 
 from .storage.base import MnemosStore, Memory
@@ -34,6 +37,37 @@ from .constants import (
 
 
 CML_TYPE_PREFIXES = ("D:", "C:", "F:", "L:", "P:", "W:", "R:")
+
+
+@contextmanager
+def _regex_time_limit():
+    """SIGALRM-based bound on caller-supplied regex scans.
+
+    Python's re has no timeout, so a catastrophic-backtracking pattern from
+    the MCP-exposed bulk_rewrite would hang the single-threaded server loop
+    forever, dry_run included. Unix main-thread only; degrades to a no-op
+    elsewhere (signal.signal outside the main thread raises ValueError).
+    Override seconds via MNEMOS_BULK_REWRITE_TIMEOUT, 0 disables."""
+    try:
+        seconds = int(os.environ.get("MNEMOS_BULK_REWRITE_TIMEOUT", "30") or 0)
+    except ValueError:
+        seconds = 30
+    if (seconds <= 0 or os.name == "nt"
+            or threading.current_thread() is not threading.main_thread()):
+        yield
+        return
+    import signal
+
+    def _raise(signum, frame):
+        raise TimeoutError("regex scan timed out")
+
+    old = signal.signal(signal.SIGALRM, _raise)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
 
 
 def _sigmoid(x):
@@ -194,6 +228,11 @@ class Mnemos:
             "importance": importance, "type": mem_type, "layer": layer,
             "embedded": cached_embedding is not None,
         }
+        if cached_embedding is None and getattr(self.store, "supports_vec", lambda: False)():
+            result["warning"] = (
+                "embedding failed; memory stored FTS-only and invisible to "
+                "vector search until backfilled, run `mnemos embed-fill`"
+            )
         if subcategory:
             result["subcategory"] = subcategory
         if valid_from:
@@ -233,7 +272,7 @@ class Mnemos:
         with 'related' links into a traceable cluster. Returns a summary with
         all child ids. Phase 1 layers a hub plus parent/child links on top.
         """
-        from .splitter import split_content, split_is_lossless
+        from .splitter import split_content, split_is_lossless, explode_cml_lines
         chunks = split_content(content)
         # Never risk losing a fact: if the mechanical split is not provably
         # lossless (or did not actually split), store the original whole.
@@ -251,6 +290,10 @@ class Mnemos:
         n = len(chunks)
         ids = []
         for i, ch in enumerate(chunks):
+            # The size splitter is line-preserving, so a packed
+            # multi-statement line lands verbatim in its child; explode it
+            # here because _no_split below skips the store-path exploder.
+            ch = explode_cml_lines(ch)
             extra = f"split-part:{i + 1}/{n},nyx-split"
             child_tags = f"{base},{extra}" if base else extra
             res = self.store_memory(
@@ -287,7 +330,8 @@ class Mnemos:
         """
         if not hasattr(self.store, "_get_conn"):
             return {"error": "remediate-oversized requires the SQLite backend"}
-        from .splitter import split_content, split_is_lossless, split_preserves_all_sentences
+        from .splitter import (split_content, split_is_lossless,
+                               split_preserves_all_sentences, explode_cml_lines)
 
         conn = self.store._get_conn()
         clause = "length(content) > ?"
@@ -351,6 +395,10 @@ class Mnemos:
                     n = len(chunks)
                     child_ids = []
                     for i, ch in enumerate(chunks):
+                        # Same per-line explode as _store_split: children
+                        # inherit packed lines verbatim and are stored with
+                        # _no_split, so this is their only atomization pass.
+                        ch = explode_cml_lines(ch)
                         parts = [base, f"split-part:{i + 1}/{n}", marker, "nyx-split"]
                         ctags = ",".join(t for t in parts if t)
                         res = self.store_memory(
@@ -775,6 +823,11 @@ class Mnemos:
         rerank_pool = max(limit * 3, 20)
         if search_mode == "hybrid" and fts_ids and vec_ids:
             merged_ids = rrf_merge(fts_ids, vec_ids)[:rerank_pool]
+        elif search_mode == "hybrid" and vec_ids:
+            # FTS found nothing but the vector side did (typical for
+            # cross-lingual queries where no token overlaps). Without this
+            # branch the vec hits were computed and then thrown away.
+            merged_ids = vec_ids[:rerank_pool]
         elif search_mode == "vec":
             merged_ids = vec_ids[:limit]
         else:
@@ -1219,41 +1272,50 @@ class Mnemos:
             where += " AND (',' || tags || ',') LIKE ?"
             params.append(f"%,{tags},%")
 
-        if use_regex:
-            rows = conn.execute(
-                f"SELECT id, content FROM memories WHERE {where}", params,
-            ).fetchall()
-            matches = [(r["id"], r["content"]) for r in rows
-                       if regex.search(r["content"] or "")]
-        else:
-            rows = conn.execute(
-                f"SELECT id, content FROM memories WHERE {where} AND content LIKE ?",
-                params + [f"%{pattern}%"],
-            ).fetchall()
-            matches = [(r["id"], r["content"]) for r in rows]
+        try:
+            from contextlib import nullcontext
+            guard = _regex_time_limit() if use_regex else nullcontext()
+            with guard:
+                if use_regex:
+                    rows = conn.execute(
+                        f"SELECT id, content FROM memories WHERE {where}", params,
+                    ).fetchall()
+                    matches = [(r["id"], r["content"]) for r in rows
+                               if regex.search(r["content"] or "")]
+                else:
+                    rows = conn.execute(
+                        f"SELECT id, content FROM memories WHERE {where} AND content LIKE ?",
+                        params + [f"%{pattern}%"],
+                    ).fetchall()
+                    matches = [(r["id"], r["content"]) for r in rows]
 
-        # Compute actual changes (filter out no-op rewrites where pattern
-        # matched but replacement was identical, e.g. idempotent rerun)
-        changes = []
-        for mid, content in matches:
-            if use_regex:
-                new_content = regex.sub(replacement, content or "")
-            else:
-                new_content = (content or "").replace(pattern, replacement)
-            if new_content == content:
-                continue
-            changes.append({
-                "id": mid,
-                "_new_content": new_content,
-                "before": self._match_snippet(
-                    content or "", pattern if not use_regex else "",
-                    preview_chars,
-                ),
-                "after": self._match_snippet(
-                    new_content, replacement, preview_chars,
-                ),
-                "diff_chars": len(new_content) - len(content or ""),
-            })
+                # Compute actual changes (filter out no-op rewrites where pattern
+                # matched but replacement was identical, e.g. idempotent rerun)
+                changes = []
+                for mid, content in matches:
+                    if use_regex:
+                        new_content = regex.sub(replacement, content or "")
+                    else:
+                        new_content = (content or "").replace(pattern, replacement)
+                    if new_content == content:
+                        continue
+                    changes.append({
+                        "id": mid,
+                        "_new_content": new_content,
+                        "before": self._match_snippet(
+                            content or "", pattern if not use_regex else "",
+                            preview_chars,
+                        ),
+                        "after": self._match_snippet(
+                            new_content, replacement, preview_chars,
+                        ),
+                        "diff_chars": len(new_content) - len(content or ""),
+                    })
+        except TimeoutError:
+            return {"error": ("regex scan timed out (catastrophic "
+                              "backtracking?); simplify the pattern"),
+                    "matched": 0, "affected": 0, "changes": [],
+                    "dry_run": dry_run}
 
         if len(changes) > max_affected:
             return {
@@ -1441,6 +1503,46 @@ class Mnemos:
             "embedded_now": done,
             "archived_index_size": self.store.archived_embed_count(),
         }
+
+    def embed_fill(self, limit: Optional[int] = None, dry_run: bool = False) -> dict:
+        """Backfill vectors for active memories that have none.
+
+        The store path deliberately keeps a memory when embedding fails
+        (availability over consistency), which used to be a one-way door:
+        reindex-archived only covers the tier-2 index and doctor pointed at
+        this command before it existed. Missing vectors here are exactly the
+        rows embed_status reports as `missing`.
+        """
+        if not hasattr(self.store, "_get_conn"):
+            return {"error": "embed-fill requires a SQLite-based store"}
+        conn = self.store._get_conn()
+        rows = conn.execute(
+            "SELECT m.id, m.project, m.content, m.tags, m.type, m.layer "
+            "FROM memories m WHERE m.status='active' AND m.namespace=? "
+            "AND NOT EXISTS (SELECT 1 FROM embed_meta em "
+            " WHERE em.source_db='memory' AND em.source_id=m.id) "
+            "ORDER BY m.id",
+            (self.namespace,),
+        ).fetchall()
+        if limit:
+            rows = rows[:limit]
+        filled = failed = 0
+        for r in rows:
+            if dry_run:
+                continue
+            text = prep_memory_text(
+                r["project"], r["content"], r["tags"] or "",
+                mem_type=r["type"] or "", layer=r["layer"] or "",
+            )
+            vecs = embed([text], prefix="passage")
+            if vecs and vecs[0]:
+                self.store._store_embedding(
+                    r["id"], vecs[0], text_hash=embed_text_hash(text))
+                filled += 1
+            else:
+                failed += 1
+        return {"missing": len(rows), "filled": filled, "failed": failed,
+                "dry_run": dry_run}
 
     def embed_status(self) -> dict:
         """Embedding coverage report."""
@@ -1631,7 +1733,14 @@ class Mnemos:
             report["issues"].append(f"FTS check failed: {e}")
 
         # --- Embedding coverage ---
-        cov = self.embed_status()
+        # Guarded: embed_status queries embed_meta columns, and schema drift
+        # there (the exact condition doctor exists to diagnose) must surface
+        # as a reported issue, not kill the whole health check.
+        try:
+            cov = self.embed_status()
+        except Exception as e:
+            report["issues"].append(f"Embedding coverage check failed: {e}")
+            cov = {"missing": 0, "embedded": "unknown"}
         if cov.get("missing", 0) > 0:
             report["issues"].append(
                 f"{cov['missing']} active memories without embeddings ({cov['coverage']:.0%} coverage)"
@@ -1645,6 +1754,38 @@ class Mnemos:
                 )
         else:
             report["checks"].append(f"Embeddings: 100% coverage ({cov.get('embedded', 0)} vectors)")
+
+        # --- Vector model provenance ---
+        # A different-dims model fails loudly at insert; a same-dims swap is
+        # the dangerous case: old and new vectors coexist and every KNN
+        # comparison is silently meaningless. NULL model rows predate
+        # provenance tracking and are reported as a check, not an issue.
+        try:
+            from .constants import FASTEMBED_MODEL
+            rows = conn.execute(
+                "SELECT model, COUNT(*) AS n FROM embed_meta "
+                "WHERE source_db = 'memory' GROUP BY model"
+            ).fetchall()
+            foreign = [(r["model"], r["n"]) for r in rows
+                       if r["model"] and r["model"] != FASTEMBED_MODEL]
+            untracked = sum(r["n"] for r in rows if not r["model"])
+            if foreign:
+                report["issues"].append(
+                    "Mixed vector provenance: "
+                    + ", ".join(f"{n} vectors from '{m}'" for m, n in foreign)
+                    + f" alongside current model '{FASTEMBED_MODEL}'. "
+                    "Same-index vectors from different models make KNN "
+                    "results meaningless; re-embed with `mnemos embed-fill`."
+                )
+            elif untracked:
+                report["checks"].append(
+                    f"Vector provenance: {untracked} vectors predate model "
+                    "tracking (assumed current model)"
+                )
+            else:
+                report["checks"].append("Vector provenance: consistent")
+        except Exception as e:
+            report["issues"].append(f"Provenance check failed: {e}")
 
         # Re-check issues post-migration so callers see the clean state
         if migrate and report["migrations_applied"]:

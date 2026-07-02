@@ -23,7 +23,7 @@ from typing import Optional
 
 from .base import MnemosStore, Memory, SearchResult
 from ..constants import (
-    DEFAULT_DB_PATH, DEFAULT_NAMESPACE, FASTEMBED_DIMS,
+    DEFAULT_DB_PATH, DEFAULT_NAMESPACE, FASTEMBED_DIMS, FASTEMBED_MODEL,
     BM25_WEIGHTS, RANKING_ORDER_SQL, BM25_CALL,
 )
 
@@ -71,6 +71,20 @@ def _ensure_vec_db(path, dims=FASTEMBED_DIMS):
             UNIQUE(source_db, source_id)
         )
     """)
+    # Back-compat column backfill, same treatment the memories table gets in
+    # init_schema. CREATE TABLE IF NOT EXISTS is a no-op on a pre-v10.6
+    # embed_meta (no text_hash/model), while _store_embedding writes
+    # text_hash unconditionally, so without this every store/update on an
+    # older DB throws "no such column". ALTER ADD COLUMN cannot carry a
+    # non-constant default, hence nullable embedded_at here.
+    for table in ("embed_meta", "embed_meta_arch"):
+        existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for col in ("text_hash", "model", "embedded_at"):
+            if col not in existing:
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+                except Exception:
+                    pass
     return conn
 
 
@@ -249,8 +263,22 @@ class SQLiteStore(MnemosStore):
                 VALUES('delete', old.id, old.content, old.project, old.tags);
             END
         """)
+        # Guarded UPDATE trigger: without the WHEN clause every UPDATE fully
+        # re-tokenized the row into FTS, and get_memory bumps access_count on
+        # every read, i.e. a full FTS reindex per read. Upgrade in place when
+        # an existing DB still carries the unguarded trigger (CREATE TRIGGER
+        # IF NOT EXISTS would silently keep it).
+        existing_au = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='memories_au'"
+        ).fetchone()
+        if existing_au and "WHEN" not in existing_au[0].upper().split("BEGIN")[0]:
+            conn.execute("DROP TRIGGER memories_au")
         conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+            CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories
+            WHEN new.content IS NOT old.content
+              OR new.project IS NOT old.project
+              OR new.tags IS NOT old.tags
+            BEGIN
                 INSERT INTO memories_fts(memories_fts, rowid, content, project, tags)
                 VALUES('delete', old.id, old.content, old.project, old.tags);
                 INSERT INTO memories_fts(rowid, content, project, tags)
@@ -341,25 +369,38 @@ class SQLiteStore(MnemosStore):
 
     def store_memory(self, memory: Memory, embedding: Optional[list] = None,
                      text_hash: Optional[str] = None) -> int:
+        # Content and vector commit together: a crash between the two used to
+        # leave a keyword-findable but vector-invisible memory (FTS triggers
+        # are transactional with the INSERT, the vector write was not).
+        # BEGIN IMMEDIATE takes the write lock up front so the read-then-write
+        # inside _store_embedding cannot race a concurrent embedder of the
+        # same id into an IntegrityError.
         conn = self._get_conn()
-        cur = conn.execute(
-            """INSERT INTO memories
-               (namespace, project, content, tags, importance, type, layer,
-                verified, subcategory, valid_from, valid_until, consolidation_lock)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                memory.namespace or self.namespace,
-                memory.project, memory.content, memory.tags,
-                memory.importance, memory.type, memory.layer,
-                memory.verified, memory.subcategory,
-                memory.valid_from, memory.valid_until,
-                memory.consolidation_lock,
-            ),
-        )
-        mid = cur.lastrowid
-        conn.commit()
-        if embedding is not None:
-            self._store_embedding(mid, embedding, text_hash=text_hash)
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            cur = conn.execute(
+                """INSERT INTO memories
+                   (namespace, project, content, tags, importance, type, layer,
+                    verified, subcategory, valid_from, valid_until, consolidation_lock)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    memory.namespace or self.namespace,
+                    memory.project, memory.content, memory.tags,
+                    memory.importance, memory.type, memory.layer,
+                    memory.verified, memory.subcategory,
+                    memory.valid_from, memory.valid_until,
+                    memory.consolidation_lock,
+                ),
+            )
+            mid = cur.lastrowid
+            if embedding is not None:
+                self._store_embedding(mid, embedding, text_hash=text_hash,
+                                      commit=False)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         return mid
 
     def _get_vec_join_col(self) -> str:
@@ -380,7 +421,8 @@ class SQLiteStore(MnemosStore):
         return self._vec_join_col
 
     def _store_embedding(self, mid: int, embedding: list,
-                         text_hash: Optional[str] = None):
+                         text_hash: Optional[str] = None,
+                         commit: bool = True):
         """Insert or replace the embedding for a memory.
 
         Handles both embed_vec schemas (implicit rowid vs explicit id)
@@ -392,6 +434,9 @@ class SQLiteStore(MnemosStore):
         (content updated, re-embed failed, old vector retained) is
         detectable later; without it a stale vector is indistinguishable
         from a fresh one.
+
+        commit=False joins the caller's transaction instead of committing
+        here, so content and vector land atomically.
         """
         conn = self._get_conn()
         join_col = self._get_vec_join_col()
@@ -413,8 +458,8 @@ class SQLiteStore(MnemosStore):
             # Explicit-id schema: pre-insert into embed_meta, then use its
             # auto-assigned id as the vec0 row id
             cur = conn.execute(
-                "INSERT INTO embed_meta (source_db, source_id, text_hash) VALUES (?, ?, ?)",
-                (self.SOURCE_KEY, mid, text_hash),
+                "INSERT INTO embed_meta (source_db, source_id, text_hash, model) VALUES (?, ?, ?, ?)",
+                (self.SOURCE_KEY, mid, text_hash, FASTEMBED_MODEL),
             )
             meta_id = cur.lastrowid
             conn.execute(
@@ -430,10 +475,11 @@ class SQLiteStore(MnemosStore):
             )
             vec_id = cur.lastrowid
             conn.execute(
-                "INSERT INTO embed_meta (id, source_db, source_id, text_hash) VALUES (?, ?, ?, ?)",
-                (vec_id, self.SOURCE_KEY, mid, text_hash),
+                "INSERT INTO embed_meta (id, source_db, source_id, text_hash, model) VALUES (?, ?, ?, ?, ?)",
+                (vec_id, self.SOURCE_KEY, mid, text_hash, FASTEMBED_MODEL),
             )
-        conn.commit()
+        if commit:
+            conn.commit()
 
     def get_memory(self, mid: int, increment_access: bool = True) -> Optional[Memory]:
         conn = self._get_conn()
@@ -467,24 +513,35 @@ class SQLiteStore(MnemosStore):
         safe_fields = {k: v for k, v in (fields or {}).items() if k in self._UPDATABLE_COLUMNS}
         if not safe_fields and embedding is None:
             return False
-        rowcount = 0
-        if safe_fields:
-            set_clause = ", ".join(f"{k} = ?" for k in safe_fields.keys())
-            params = list(safe_fields.values()) + [mid]
-            cur = conn.execute(
-                f"UPDATE memories SET {set_clause}, updated_at = datetime('now', 'localtime') WHERE id = ?",
-                params,
-            )
-            rowcount = cur.rowcount
+        # Single transaction for content + vector: a crash between them used
+        # to leave the new content searchable via FTS with the OLD vector and
+        # text_hash still attached.
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            rowcount = 0
+            if safe_fields:
+                set_clause = ", ".join(f"{k} = ?" for k in safe_fields.keys())
+                params = list(safe_fields.values()) + [mid]
+                cur = conn.execute(
+                    f"UPDATE memories SET {set_clause}, updated_at = datetime('now', 'localtime') WHERE id = ?",
+                    params,
+                )
+                rowcount = cur.rowcount
+            else:
+                # Embedding-only update, verify the row exists so we don't lie about success
+                row = conn.execute("SELECT 1 FROM memories WHERE id = ?", (mid,)).fetchone()
+                if row is None:
+                    conn.rollback()
+                    return False
+                rowcount = 1
+            if embedding is not None:
+                self._store_embedding(mid, embedding, text_hash=text_hash,
+                                      commit=False)
             conn.commit()
-        else:
-            # Embedding-only update, verify the row exists so we don't lie about success
-            row = conn.execute("SELECT 1 FROM memories WHERE id = ?", (mid,)).fetchone()
-            if row is None:
-                return False
-            rowcount = 1
-        if embedding is not None:
-            self._store_embedding(mid, embedding, text_hash=text_hash)
+        except Exception:
+            conn.rollback()
+            raise
         return rowcount > 0
 
     def delete_memory(self, mid: int, hard: bool = False) -> bool:
@@ -551,7 +608,8 @@ class SQLiteStore(MnemosStore):
                 where += " AND m.type = ?"
                 params.append(type_filter)
             if valid_only:
-                where += " AND (m.valid_until IS NULL OR m.valid_until >= date('now', 'localtime'))"
+                where += (" AND (m.valid_until IS NULL OR m.valid_until > date('now', 'localtime'))"
+                          " AND (m.valid_from IS NULL OR m.valid_from <= date('now', 'localtime'))")
             params.append(limit)
 
             try:
@@ -610,7 +668,8 @@ class SQLiteStore(MnemosStore):
             filter_clause += " AND type = ?"
             filter_params.append(type_filter)
         if valid_only:
-            filter_clause += " AND (valid_until IS NULL OR valid_until >= date('now', 'localtime'))"
+            filter_clause += (" AND (valid_until IS NULL OR valid_until > date('now', 'localtime'))"
+                              " AND (valid_from IS NULL OR valid_from <= date('now', 'localtime'))")
 
         active = set(
             r[0] for r in conn.execute(
@@ -624,7 +683,9 @@ class SQLiteStore(MnemosStore):
     # --- Tier-2 archived index (v10.7.0) ---
 
     def _store_archived_embedding(self, mid: int, embedding: list,
-                                  text_hash: Optional[str] = None):
+                                  text_hash: Optional[str] = None,
+                                  commit: bool = True,
+                                  model: Optional[str] = FASTEMBED_MODEL):
         """Store/replace a memory's embedding in the tier-2 archived index.
 
         Mirrors _store_embedding but targets embed_vec_arch / embed_meta_arch,
@@ -647,10 +708,11 @@ class SQLiteStore(MnemosStore):
         )
         vec_id = cur.lastrowid
         conn.execute(
-            "INSERT INTO embed_meta_arch (id, source_db, source_id, text_hash) VALUES (?, ?, ?, ?)",
-            (vec_id, self.SOURCE_KEY, mid, text_hash),
+            "INSERT INTO embed_meta_arch (id, source_db, source_id, text_hash, model) VALUES (?, ?, ?, ?, ?)",
+            (vec_id, self.SOURCE_KEY, mid, text_hash, model),
         )
-        conn.commit()
+        if commit:
+            conn.commit()
 
     def move_embedding_to_archive(self, mid: int) -> bool:
         """Move a memory's vector from the active index into the archived index.
@@ -663,7 +725,7 @@ class SQLiteStore(MnemosStore):
         conn = self._get_conn()
         join_col = self._get_vec_join_col()
         meta = conn.execute(
-            "SELECT id, text_hash FROM embed_meta WHERE source_db = ? AND source_id = ?",
+            "SELECT id, text_hash, model FROM embed_meta WHERE source_db = ? AND source_id = ?",
             (self.SOURCE_KEY, mid),
         ).fetchone()
         if not meta:
@@ -675,13 +737,25 @@ class SQLiteStore(MnemosStore):
         if not vrow or vrow["j"] is None:
             return False
         import json as _json
-        self._store_archived_embedding(mid, _json.loads(vrow["j"]), meta["text_hash"])
-        conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta["id"],))
-        conn.execute(
-            "DELETE FROM embed_meta WHERE source_db = ? AND source_id = ?",
-            (self.SOURCE_KEY, mid),
-        )
-        conn.commit()
+        # Insert-into-arch and delete-from-active commit together: the arch
+        # insert used to commit on its own, so a crash before the deletes
+        # left the vector in BOTH indexes, invisible to the reconcile check
+        # (which only looks for missing arch copies).
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._store_archived_embedding(mid, _json.loads(vrow["j"]),
+                                           meta["text_hash"], commit=False,
+                                           model=meta["model"])
+            conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta["id"],))
+            conn.execute(
+                "DELETE FROM embed_meta WHERE source_db = ? AND source_id = ?",
+                (self.SOURCE_KEY, mid),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         return True
 
     def search_vec_archived(self, embedding, namespace=None, project=None,
@@ -722,7 +796,8 @@ class SQLiteStore(MnemosStore):
             clause += " AND type = ?"
             params.append(type_filter)
         if valid_only:
-            clause += " AND (valid_until IS NULL OR valid_until >= date('now', 'localtime'))"
+            clause += (" AND (valid_until IS NULL OR valid_until > date('now', 'localtime'))"
+                       " AND (valid_from IS NULL OR valid_from <= date('now', 'localtime'))")
         keep = set(
             r[0] for r in conn.execute(
                 f"SELECT id FROM memories WHERE id IN ({ph}){clause}", params
@@ -834,7 +909,8 @@ class SQLiteStore(MnemosStore):
         ph = ",".join("?" for _ in source_ids)
         where_extra = ""
         if valid_only:
-            where_extra = " AND (valid_until IS NULL OR valid_until >= date('now', 'localtime'))"
+            where_extra = (" AND (valid_until IS NULL OR valid_until > date('now', 'localtime'))"
+                           " AND (valid_from IS NULL OR valid_from <= date('now', 'localtime'))")
         rows = conn.execute(
             f"SELECT * FROM memories WHERE id IN ({ph}){where_extra} ORDER BY created_at DESC",
             source_ids,

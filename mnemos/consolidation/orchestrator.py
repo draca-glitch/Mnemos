@@ -101,11 +101,11 @@ def cleanup_orphan_vectors(conn, execute: bool = True):
         r[0]: r[1] for r in conn.execute("SELECT id, status FROM memories").fetchall()
     }
     embedded = conn.execute(
-        "SELECT id, source_id, text_hash FROM embed_meta WHERE source_db = ?", (SOURCE_KEY,)
+        "SELECT id, source_id, text_hash, model FROM embed_meta WHERE source_db = ?", (SOURCE_KEY,)
     ).fetchall()
     join_col = _vec_join_col(conn)
     moved = removed = 0
-    for meta_id, source_id, thash in embedded:
+    for meta_id, source_id, thash, emodel in embedded:
         st = status_by_id.get(source_id)
         if st == "active":
             continue
@@ -133,9 +133,9 @@ def cleanup_orphan_vectors(conn, execute: bool = True):
                     "INSERT INTO embed_vec_arch(embedding) VALUES (?)", (_serialize_vec(emb),)
                 )
                 conn.execute(
-                    "INSERT INTO embed_meta_arch (id, source_db, source_id, text_hash) "
-                    "VALUES (?, ?, ?, ?)",
-                    (cur.lastrowid, SOURCE_KEY, source_id, thash),
+                    "INSERT INTO embed_meta_arch (id, source_db, source_id, text_hash, model) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (cur.lastrowid, SOURCE_KEY, source_id, thash, emodel),
                 )
                 moved += 1
             conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta_id,))
@@ -412,6 +412,17 @@ def run_nyx_cycle(
                 phase_stats["phase4"] = phase_contradict(
                     conn, mergeable_embeddings, mem_by_id, is_surge, execute=execute
                 )
+                if execute:
+                    p4 = phase_stats["phase4"]
+                    if p4.get("superseded", 0) > 0 and 5 in phases:
+                        # Same staleness problem the post-phase-2 reload
+                        # solves: SUPERSEDED archived rows in the DB while
+                        # mem_by_id still says active, letting synthesis cite
+                        # a just-archived source.
+                        log("Reloading embeddings after supersedes...")
+                        all_embeddings, mergeable_embeddings, mem_by_id = load_embeddings(
+                            conn, project=project
+                        )
 
             if 5 in phases:
                 # Only synthesize if enough new ORIGINAL material

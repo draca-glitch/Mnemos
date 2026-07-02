@@ -127,21 +127,39 @@ def split_content(content, threshold=None, target=None, hard=False):
     return chunks or [content]
 
 
-# A new CML statement begins at a canonical prefix (F:/D:/C:/L:/P:/W:/R:) that is
-# neither glued to a preceding alphanumeric (so "F:" inside "PDF:" is not a
-# boundary) nor immediately followed by a path separator (so a Windows drive
-# letter "C:\" or a "D:/path" URL is not a boundary either). Used to explode one
-# physical line of prefix-chained CML into one line per statement, mechanically,
-# for memories that predate the one-fact-per-line cemelify prompt (and where no
-# LLM is available to rewrite).
-_CML_STATEMENT_BOUNDARY = re.compile(r"(?<![A-Za-z0-9])(?=[FDCLPWR]:(?![\\/]))")
+# A new CML statement begins at a canonical prefix (F:/D:/C:/L:/P:/W:/R:) not
+# immediately followed by a path separator (so a Windows drive letter "C:\"
+# or a "D:/path" URL is not a candidate). A candidate only counts as a real
+# boundary when it sits at the start of the blob or after a statement
+# terminator (';' or '.'): CML chains statements with ';', so a prefix letter
+# appearing after a mere space, '(', '"' or other punctuation is interior
+# content ("free space on C: drive", "(P:prefer HE-AAC)"), and splitting
+# there shreds the fact. The loss-guard cannot catch that, it only proves
+# content survives, not that split placement is sane.
+_CML_STATEMENT_CANDIDATE = re.compile(r"[FDCLPWR]:(?![\\/])")
+
+
+def _statement_starts(content):
+    """Offsets where a new CML statement genuinely begins."""
+    starts = []
+    for m in _CML_STATEMENT_CANDIDATE.finditer(content):
+        pos = m.start()
+        if pos == 0:
+            starts.append(pos)
+            continue
+        before = content[:pos].rstrip()
+        if before and before[-1] in ";.":
+            starts.append(pos)
+    return starts
 
 
 def _sep_free(text):
-    """Content with separators (whitespace, ';', '.') stripped. Two CML
+    """Content with separators (whitespace and ';') stripped. Two CML
     renderings of the same facts differ only in separators, so this is the
-    invariant the mechanical exploder must preserve."""
-    return re.sub(r"[\s;.]+", "", text or "")
+    invariant the mechanical exploder must preserve. Periods are content,
+    not separators: stripping them would blind the guard to a split that
+    relocates or drops one."""
+    return re.sub(r"[\s;]+", "", text or "")
 
 
 def explode_cml_chain(content):
@@ -149,22 +167,27 @@ def explode_cml_chain(content):
     one-fact-per-line CML, mechanically (stdlib only, no LLM, no DB).
 
     Splits BEFORE each canonical prefix (F:/D:/C:/L:/P:/W:/R:) that starts a new
-    statement. A ';' not followed by such a prefix is intra-fact sub-clause
-    chaining and stays put, so a single fact is never shredded.
+    statement, i.e. one at the start of the blob or right after a ';' or '.'
+    terminator. A ';' not followed by such a prefix is intra-fact sub-clause
+    chaining and stays put, and a prefix glued to interior punctuation or a
+    bare drive letter ("on C: drive") is interior content, so a single fact
+    is never shredded.
 
     Loss-guarded: the only characters that may change are separators. If the
     separator-free content of the result does not equal the input's, or the
     input is empty, already multi-line, or yields fewer than two statements, the
     input is returned unchanged. It never drops or paraphrases a fact; an
-    ambiguous blob is left as-is for the LLM path. Note it does not prove split
-    PLACEMENT (a spurious interior prefix could add a break), so spot-check
-    results on small sets.
+    ambiguous blob is left as-is for the LLM path.
     """
     if not content or "\n" in content:
         return content
+    cuts = [s for s in _statement_starts(content) if s > 0]
+    if not cuts:
+        return content
+    bounds = [0] + cuts + [len(content)]
     parts = []
-    for seg in _CML_STATEMENT_BOUNDARY.split(content):
-        seg = re.sub(r";+\s*$", "", seg.strip()).strip()
+    for a, b in zip(bounds, bounds[1:]):
+        seg = re.sub(r";+\s*$", "", content[a:b].strip()).strip()
         if seg:
             parts.append(seg)
     if len(parts) < 2:
@@ -173,6 +196,18 @@ def explode_cml_chain(content):
     if _sep_free(exploded) != _sep_free(content):
         return content
     return exploded
+
+
+def explode_cml_lines(text):
+    """Apply explode_cml_chain to each physical line of a multi-line text.
+
+    The chain exploder is deliberately a no-op on multi-line input, so a
+    size-split child that inherited a packed multi-statement line from its
+    parent would stay un-atomic forever without this per-line pass. Same
+    loss guard per line; a line that cannot be safely exploded is kept."""
+    if not text or "\n" not in text:
+        return explode_cml_chain(text) if text else text
+    return "\n".join(explode_cml_chain(ln) for ln in text.split("\n"))
 
 
 def _nonblank_lines(text):

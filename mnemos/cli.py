@@ -19,6 +19,22 @@ from .core import Mnemos
 from .constants import VALID_TYPES, VALID_LAYERS, DEFAULT_NAMESPACE
 
 
+def _ensure_utf8_output():
+    """Reconfigure non-UTF-8 stdout/stderr to UTF-8 with replacement.
+
+    CML glyphs and multilingual content raise UnicodeEncodeError on
+    cp1252-encoded streams (Windows consoles and redirected output),
+    aborting whole commands. No-op on UTF-8 streams and on streams
+    without reconfigure (pipes wrapped by tests, exotic runners)."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if enc != "utf8" and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 def cmd_add(mnemos, args):
     result = mnemos.store_memory(
         project=args.project,
@@ -135,6 +151,11 @@ def cmd_reindex_archived(mnemos, args):
     print(json.dumps(mnemos.reindex_archived(), indent=2, ensure_ascii=False))
 
 
+def cmd_embed_fill(mnemos, args):
+    result = mnemos.embed_fill(limit=args.limit, dry_run=args.dry_run)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
 def cmd_remediate_oversized(mnemos, args):
     result = mnemos.remediate_oversized(
         min_size=args.min_size, max_size=args.max_size,
@@ -243,6 +264,7 @@ def cmd_serve(mnemos, args):
 
 
 def main(argv=None):
+    _ensure_utf8_output()
     parser = argparse.ArgumentParser(prog="mnemos", description="Mnemos memory system CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -344,6 +366,14 @@ def main(argv=None):
     p = sub.add_parser("reindex-archived",
                        help="Backfill the tier-2 archived vector index (embed all archived memories)")
     p.set_defaults(fn=cmd_reindex_archived)
+
+    # embed-fill
+    p = sub.add_parser("embed-fill",
+                       help="Backfill vectors for active memories that have none (the rows embed-status reports as missing)")
+    p.add_argument("--limit", type=int, default=None, help="Process at most N memories")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Report how many are missing without embedding anything")
+    p.set_defaults(fn=cmd_embed_fill)
 
     # remediate-oversized
     p = sub.add_parser("remediate-oversized",

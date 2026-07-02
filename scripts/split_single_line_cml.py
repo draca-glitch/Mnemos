@@ -43,15 +43,30 @@ import re
 import sqlite3
 import sys
 
-# Mechanical CML statement boundary: a canonical prefix that is neither glued to
-# a preceding alphanumeric (so "F:" inside "PDF:" is not a boundary) nor followed
-# by a path separator (so a Windows drive letter "C:\" or a "D:/path" URL is not
-# a boundary). The trailing (?![\\/]) is what keeps file paths from false-splitting.
-_BOUNDARY = re.compile(r"(?<![A-Za-z0-9])(?=[FDCLPWR]:(?![\\/]))")
+# Mechanical CML statement boundary, kept in sync with mnemos.splitter: a
+# canonical prefix not followed by a path separator (so "C:\" and "D:/path"
+# are not candidates), counted as a boundary only at the start of the blob or
+# after a ';'/'.' terminator. A prefix after a mere space or punctuation is
+# interior content ("free space on C: drive", "(P:prefer ...)") and splitting
+# there shreds the fact in a way the loss guard cannot see.
+_CANDIDATE = re.compile(r"[FDCLPWR]:(?![\\/])")
+
+
+def _statement_starts(content):
+    starts = []
+    for m in _CANDIDATE.finditer(content):
+        pos = m.start()
+        if pos == 0:
+            starts.append(pos)
+            continue
+        before = content[:pos].rstrip()
+        if before and before[-1] in ";.":
+            starts.append(pos)
+    return starts
 
 
 def _sep_free(text):
-    return re.sub(r"[\s;.]+", "", text or "")
+    return re.sub(r"[\s;]+", "", text or "")
 
 
 def explode(content):
@@ -60,9 +75,13 @@ def explode(content):
     fewer than two statements, or the loss guard fails."""
     if not content or "\n" in content:
         return content
+    cuts = [s for s in _statement_starts(content) if s > 0]
+    if not cuts:
+        return content
+    bounds = [0] + cuts + [len(content)]
     parts = []
-    for seg in _BOUNDARY.split(content):
-        seg = re.sub(r";+\s*$", "", seg.strip()).strip()
+    for a, b in zip(bounds, bounds[1:]):
+        seg = re.sub(r";+\s*$", "", content[a:b].strip()).strip()
         if seg:
             parts.append(seg)
     if len(parts) < 2:

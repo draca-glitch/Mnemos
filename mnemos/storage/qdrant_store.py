@@ -80,11 +80,24 @@ class QdrantStore(MnemosStore):
     def store_memory(self, memory: Memory, embedding=None, text_hash=None) -> int:
         mid = self._sqlite.store_memory(memory, embedding=None)  # skip sqlite-vec
         if embedding is not None:
-            self._upsert_vector(mid, embedding, memory)
+            # SQLite and Qdrant cannot share a transaction, so compensate:
+            # if the network upsert fails, remove the just-committed content
+            # row rather than leave a keyword-findable, vector-invisible
+            # memory behind. The caller sees the failure either way.
+            try:
+                self._upsert_vector(mid, embedding, memory, text_hash=text_hash)
+            except Exception:
+                self._sqlite.delete_memory(mid, hard=True)
+                raise
         return mid
 
-    def _upsert_vector(self, mid: int, embedding: list, memory: Memory):
-        """Push the vector to Qdrant with full metadata payload for filtering."""
+    def _upsert_vector(self, mid: int, embedding: list, memory: Memory,
+                       text_hash=None):
+        """Push the vector to Qdrant with full metadata payload for filtering.
+
+        text_hash rides along in the payload so vector staleness stays
+        detectable on this backend too (it has no embed_meta table).
+        """
         self._client.upsert(
             collection_name=self._collection,
             points=[
@@ -99,6 +112,7 @@ class QdrantStore(MnemosStore):
                         "layer": memory.layer,
                         "status": memory.status,
                         "valid_until": memory.valid_until,
+                        "text_hash": text_hash,
                     },
                 )
             ],
@@ -112,7 +126,7 @@ class QdrantStore(MnemosStore):
         if ok and embedding is not None:
             mem = self._sqlite.get_memory(mid, increment_access=False)
             if mem:
-                self._upsert_vector(mid, embedding, mem)
+                self._upsert_vector(mid, embedding, mem, text_hash=text_hash)
         return ok
 
     def delete_memory(self, mid, hard=False):

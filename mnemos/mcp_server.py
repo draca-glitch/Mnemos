@@ -300,11 +300,21 @@ TOOL_DISPATCH = {
 }
 
 
+# Sentinel for a stdin line that could not be parsed: distinct from None
+# (EOF, terminate) so one malformed line skips instead of killing the loop.
+SKIP_MSG = object()
+
+
 def read_msg():
     line = sys.stdin.readline()
     if not line:
         return None
-    return json.loads(line.strip())
+    try:
+        return json.loads(line.strip())
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"Mnemos: skipping malformed stdin line: {e}\n")
+        sys.stderr.flush()
+        return SKIP_MSG
 
 
 def send_msg(msg):
@@ -339,6 +349,8 @@ def main():
         msg = read_msg()
         if msg is None:
             break
+        if msg is SKIP_MSG:
+            continue
 
         method = msg.get("method", "")
         id_ = msg.get("id")
@@ -409,10 +421,17 @@ def main():
                     "result": {"content": [{"type": "text", "text": json.dumps(result)}]},
                 })
             except Exception as e:
+                # Full detail to stderr for the operator; the caller gets the
+                # class plus a truncated message (raw str(e) can carry DB
+                # paths and whole schema fragments).
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+                sys.stderr.flush()
+                brief = f"{type(e).__name__}: {str(e)[:300]}"
                 send_msg({
                     "jsonrpc": "2.0", "id": id_,
                     "result": {
-                        "content": [{"type": "text", "text": json.dumps({"error": str(e)})}],
+                        "content": [{"type": "text", "text": json.dumps({"error": brief})}],
                         "isError": True,
                     },
                 })
