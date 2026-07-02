@@ -138,7 +138,12 @@ class Mnemos:
         # memories, losslessly and without an LLM, so no single memory balloons
         # past the threshold. Skipped for consolidation_lock (intentional whole
         # prose) and when the caller already split (an un-splittable single line).
-        from .splitter import split_enabled, needs_split
+        # Normalize single-line prefix-chained CML (';'-joined facts) to one
+        # fact per line before the size guard. Mechanical, loss-guarded, no LLM;
+        # a blob it cannot safely explode is returned unchanged.
+        from .splitter import split_enabled, needs_split, explode_cml_chain
+        if not _no_split:
+            content = explode_cml_chain(content)
         if (not _no_split and not consolidation_lock and split_enabled()
                 and needs_split(content)):
             return self._store_split(
@@ -470,22 +475,33 @@ class Mnemos:
         if not candidates:
             return None, embedding
 
-        # Rerank with cross-encoder
+        # Score the best candidate. Prefer the cross-encoder; without it, fall
+        # back to the actual vector distance rather than a blanket score. The old
+        # fallback assigned a flat 0.75 to any coarse (FTS/CML/vec) match, which
+        # is above the dedup threshold, so EVERY coarse match was flagged a
+        # duplicate and the store was blocked, distinct or not (silent data loss).
+        score = None
+        best_id = None
         if self.enable_rerank:
             try:
                 docs = [{"text": c["content"], "id": c["id"]} for c in candidates.values()]
                 ranked = rerank(content, docs)
-                best = ranked[0]
-                best_id = best["id"]
-                raw_score = best.get("_rerank_score", 0)
-                score = _sigmoid(raw_score)
+                best_id = ranked[0]["id"]
+                score = _sigmoid(ranked[0].get("_rerank_score", 0))
             except Exception:
-                # Reranker not available, use highest method-count signal
-                score = 0.75
-                best_id = max(candidates.keys(), key=lambda k: len(candidates[k]["methods"]))
-        else:
-            score = 0.75
-            best_id = max(candidates.keys(), key=lambda k: len(candidates[k]["methods"]))
+                score = None  # reranker unavailable; use the vec-distance fallback
+        if score is None:
+            # No usable reranker: block only on a strong vector signal, scaled so
+            # the dedup threshold is reached exactly at VEC_DEDUP_MAX_DISTANCE.
+            # Candidates matched only by FTS/CML (no vec distance) are not a
+            # confident duplicate without the cross-encoder, so they do not block.
+            best_id = min(
+                candidates, key=lambda k: candidates[k].get("vec_distance", float("inf"))
+            )
+            dist = candidates[best_id].get("vec_distance")
+            if dist is None or dist >= VEC_DEDUP_MAX_DISTANCE:
+                return None, embedding
+            score = 1.0 - dist * (1.0 - DEDUP_RERANK_THRESHOLD) / VEC_DEDUP_MAX_DISTANCE
 
         if score < DEDUP_RERANK_THRESHOLD:
             return None, embedding

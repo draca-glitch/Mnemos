@@ -79,7 +79,7 @@ DEFAULT_CONTRADICT_MODE = os.environ.get(
 ).lower()
 
 # --- Dedup rerank threshold ---
-DEDUP_RERANK_THRESHOLD = 0.70
+DEDUP_RERANK_THRESHOLD = 0.85  # raised from 0.70: 0.70 over-blocked related-but-distinct memories (reranker scored genuinely distinct facts 0.81-0.84). Bias toward false-store (Nyx merges dups later) over false-block (silent memory loss).
 
 # --- Default valid enums (these are conventions, not enforced by storage) ---
 # Projects are free-form strings. The list below is just a sensible starter

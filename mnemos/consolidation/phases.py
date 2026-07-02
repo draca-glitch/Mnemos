@@ -33,7 +33,10 @@ from .prompts import (
     SYNTHESIS_SYSTEM, SYNTHESIS_SYSTEM_PROSE, TRIAGE_SYSTEM,
 )
 from ..embed import embed as fastembed_embed_raw, text_hash, prep_memory_text
-from ..splitter import split_content, split_is_lossless, needs_split, split_enabled
+from ..splitter import (
+    split_content, split_is_lossless, needs_split, split_enabled,
+    explode_cml_chain,
+)
 from ..constants import (
     SKIP_IMPORTANCE, MAX_CLUSTER_SIZE,
     FASTEMBED_MODEL, FASTEMBED_DIMS, CML_MODE,
@@ -138,7 +141,7 @@ def log(msg):
 # =============================================================================
 
 def load_embeddings(conn, project=None):
-    """Load active memory embeddings. Returns (embeddings_dict, mem_by_id)."""
+    """Load active memory embeddings. Returns (all_embeddings, mergeable_embeddings, mem_by_id)."""
     where = "status = 'active'"
     params = []
     if project:
@@ -174,11 +177,15 @@ def load_embeddings(conn, project=None):
     ).fetchall()
 
     embeddings = {}
+    # embed_vec may be rowid-keyed (fresh sqlite_store schema) or carry an explicit
+    # 'id' PK (legacy v7/v8 DBs). Detect which, exactly as store_embeddings does;
+    # hardcoding 'id' crashes ("no such column: id") on every fresh install.
+    join_col = _vec_join_col(conn)
     for meta_id, source_id in meta_rows:
         if source_id not in active_ids:
             continue
         row = conn.execute(
-            "SELECT embedding FROM embed_vec WHERE id = ?", (meta_id,)
+            f"SELECT embedding FROM embed_vec WHERE {join_col} = ?", (meta_id,)
         ).fetchone()
         if row and row[0]:
             blob = row[0]
@@ -420,6 +427,11 @@ def apply_merge(conn, cluster_ids, merged_content, mem_by_id):
         # (first) id is returned so the caller's lineage contract is unchanged,
         # the rest are chained with 'related' links. consolidation_lock
         # clusters are kept whole.
+        # The local merge LLM often ignores the one-fact-per-line instruction
+        # and chains distinct facts on one line with ';'. Normalize that to one
+        # fact per line mechanically (loss-guarded, no LLM) before the size
+        # guard, so merged CML stays atomic and splittable.
+        merged_content = explode_cml_chain(merged_content)
         chunks = [merged_content]
         if split_enabled() and not inherit_lock and needs_split(merged_content):
             cand = split_content(merged_content)
