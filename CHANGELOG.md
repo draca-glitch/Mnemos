@@ -4,6 +4,15 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.15.1] - 2026-07-02 (settings centralization, English-primary migration runbook)
+
+### Changed
+- All remaining module-local tunables moved to `constants.py` as the single settings surface, each with an env override: Nyx phase-2 clustering (`MNEMOS_TIGHT_THRESHOLD`, `MNEMOS_TOPIC_THRESHOLD`), phase-3 weave (`MNEMOS_WEAVE_MIN_SIMILARITY`, `MNEMOS_WEAVE_TOP_K`), phase-5 packet size (`MNEMOS_NYX_PACKET_SIZE`), per-run LLM call budgets (`MNEMOS_NORMAL_MAX_CALLS`, `MNEMOS_SURGE_MAX_CALLS`, `MNEMOS_SURGE_THRESHOLD`), and ingest limits (`MNEMOS_INGEST_CHUNK_CHARS`, `MNEMOS_INGEST_DEFAULT_PROJECT`, `MNEMOS_INGEST_MAX_READ_BYTES`). No default values changed.
+
+### Added
+- `docs/english-primary.md`: the English-primary store convention and a migration runbook for existing non-English stores.
+- `scripts/translate_store_english.py`: one-time store migration to English. Uses the NLI layer's own `is_english()` to select candidates, the configured consolidation LLM (`MNEMOS_LLM_MODEL_TRANSLATE` pins a model for the job), line-structure and per-line digit-integrity guards, dry-run mode, and package-API writes (content + vector + text hash in one transaction). Skips locked rows.
+
 ## [10.15.0] - 2026-07-02 (NLI decision layer: entailment-based dedup confirm, contradiction detection, Nyx phase-4 finder)
 
 Replaces the cross-encoder reranker for the store DECISION questions (is this a duplicate? does this contradict?) with natural-language-inference models. A reranker scores topicality ("same topic?"); NLI scores polarity ("same claim? opposite claim?"), which is the question the store layer actually asks. Backed by a 114-pair benchmark on real production memories (benchmarks/nli-bench): contradiction AUC 0.939 vs 0.69 for the reranker (which produced ~40 false positives of 96 negatives at its best threshold); dedup AUC 0.983 with 1 false positive vs 16-21 false blocks for the raw vec-distance blocker. The reranker keeps its search-ranking role, where topicality is the right signal.

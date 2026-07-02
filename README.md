@@ -183,6 +183,7 @@ Realistic compression: 14% on already-dense fact entries, up to 60% on narrative
 - **[docs/usage.md](docs/usage.md)**: CLI reference, MCP client setup, Nyx cycle config, session hooks, ingest, storage backends, RAM
 - **[docs/features.md](docs/features.md)**: what's in the box: pipeline, models, temporal decay, Nyx phases, contradiction detection, forgetting
 - **[docs/cml.md](docs/cml.md)**: CML grammar, fidelity benchmarks, opt-out
+- **[docs/english-primary.md](docs/english-primary.md)**: the English-primary store convention, why it feeds the NLI layer, and the migration runbook for existing non-English stores
 - **[docs/benchmarks.md](docs/benchmarks.md)**: full per-mode methodology, LoCoMo, end-to-end QA, consolidation quality
 - **[docs/comparison.md](docs/comparison.md)**: MemPalace head-to-head and wider-field comparison table
 - **[docs/philosophy.md](docs/philosophy.md)**: why the tool surface is minimal, why no LLM in the search path, what the Nyx cycle actually learns

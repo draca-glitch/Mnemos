@@ -120,6 +120,27 @@ NLI_FINDER_MAX_PAIRS = int(os.environ.get("MNEMOS_NLI_FINDER_MAX_PAIRS", "200"))
 CONTRADICT_MIN_SIM = float(os.environ.get("MNEMOS_CONTRADICT_MIN_SIM", "0.60"))
 CONTRADICT_MAX_SIM = float(os.environ.get("MNEMOS_CONTRADICT_MAX_SIM", "0.85"))
 
+# --- Nyx cycle tunables (v10.15.1: centralized from consolidation/phases.py;
+# this file is the single settings surface for every tunable in the package) ---
+# Phase 2 clustering
+TIGHT_THRESHOLD = float(os.environ.get("MNEMOS_TIGHT_THRESHOLD", "0.88"))   # Tier 1A near-duplicate dedup
+TOPIC_THRESHOLD = float(os.environ.get("MNEMOS_TOPIC_THRESHOLD", "0.75"))   # Tier 1B same-topic merge
+# Phase 3 weave
+WEAVE_MIN_SIMILARITY = float(os.environ.get("MNEMOS_WEAVE_MIN_SIMILARITY", "0.55"))
+WEAVE_TOP_K = int(os.environ.get("MNEMOS_WEAVE_TOP_K", "3"))
+# Phase 5 synthesis packet size
+NYX_PACKET_SIZE = int(os.environ.get("MNEMOS_NYX_PACKET_SIZE", "25"))
+# LLM call budgets per run
+NORMAL_MAX_CALLS = int(os.environ.get("MNEMOS_NORMAL_MAX_CALLS", "30"))
+SURGE_MAX_CALLS = int(os.environ.get("MNEMOS_SURGE_MAX_CALLS", "80"))
+SURGE_THRESHOLD = int(os.environ.get("MNEMOS_SURGE_THRESHOLD", "50"))       # new-memory count that triggers surge mode
+
+# --- Ingest tunables (centralized from ingest.py) ---
+INGEST_CHUNK_CHARS = int(os.environ.get("MNEMOS_INGEST_CHUNK_CHARS", "2000"))
+INGEST_DEFAULT_PROJECT = os.environ.get("MNEMOS_INGEST_DEFAULT_PROJECT", "ingested")
+INGEST_MAX_READ_BYTES = int(os.environ.get(
+    "MNEMOS_INGEST_MAX_READ_BYTES", str(50 * 1024 * 1024)))  # larger files should be chunked
+
 # --- Default valid enums (these are conventions, not enforced by storage) ---
 # Projects are free-form strings. The list below is just a sensible starter
 # set; add or remove categories to match how you organize your memory. The

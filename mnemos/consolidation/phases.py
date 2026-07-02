@@ -43,6 +43,8 @@ from ..constants import (
     DEFAULT_NAMESPACE,
     CONTRADICT_MIN_SIM, CONTRADICT_MAX_SIM,
     NYX_CONTRADICT_FINDER_DEFAULT, NLI_FINDER_THRESHOLD, NLI_FINDER_MAX_PAIRS,
+    TIGHT_THRESHOLD, TOPIC_THRESHOLD, WEAVE_MIN_SIMILARITY, WEAVE_TOP_K,
+    NYX_PACKET_SIZE, NORMAL_MAX_CALLS, SURGE_MAX_CALLS, SURGE_THRESHOLD,
 )
 from .. import nli
 
@@ -111,25 +113,10 @@ def store_embeddings(conn, tuples, model=None):
         )
 
 
-# --- Constants ---
-
-# Phase 2 thresholds
-TIGHT_THRESHOLD = 0.88    # Tier 1A: near-duplicate dedup
-TOPIC_THRESHOLD = 0.75    # Tier 1B: same-topic merge
-
-# Phase 3 thresholds
-WEAVE_MIN_SIMILARITY = 0.55  # Cross-category connection minimum
-WEAVE_TOP_K = 3              # Top K cross-category matches per memory
-
-# Phase 4 cosine gates live in ..constants (CONTRADICT_MIN_SIM/MAX_SIM)
-
-# Phase 5
-NYX_PACKET_SIZE = 25
-
-# Budget limits
-NORMAL_MAX_CALLS = 30      # Max Opus calls per normal run
-SURGE_MAX_CALLS = 80       # Max Opus calls during surge
-SURGE_THRESHOLD = 50       # New memories count that triggers surge mode
+# All Nyx tunables live in ..constants (single settings surface, v10.15.1):
+# TIGHT_THRESHOLD, TOPIC_THRESHOLD, WEAVE_MIN_SIMILARITY, WEAVE_TOP_K,
+# NYX_PACKET_SIZE, NORMAL_MAX_CALLS, SURGE_MAX_CALLS, SURGE_THRESHOLD,
+# CONTRADICT_MIN_SIM, CONTRADICT_MAX_SIM.
 
 
 def log(msg):

@@ -43,8 +43,11 @@ TEXT_EXTENSIONS = {
     ".env", ".dockerfile", ".gitignore",
 }
 
-DEFAULT_CHUNK_CHARS = 2000
-DEFAULT_PROJECT = "ingested"
+from .constants import (
+    INGEST_CHUNK_CHARS as DEFAULT_CHUNK_CHARS,
+    INGEST_DEFAULT_PROJECT as DEFAULT_PROJECT,
+    INGEST_MAX_READ_BYTES as _MAX_READ_BYTES,
+)
 
 # Pluggable extractor registry. Maps file extension to a function that
 # takes a Path and returns the extracted text (or None to skip).
@@ -69,10 +72,6 @@ def register_extractor(extension: str, fn: Callable[[Path], Optional[str]]) -> N
     _extractors[extension.lower()] = fn
 
 
-_MAX_READ_BYTES = 50 * 1024 * 1024  # 50 MB - larger files should be chunked
-                                     # externally or have a custom extractor
-                                     # registered; not worth holding half a GB
-                                     # of text in RAM during ingest.
 
 
 def _read_text_file(path: Path) -> Optional[str]:
