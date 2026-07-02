@@ -4,5 +4,6 @@
 *.jsonl
 labels*.json
 translations.json
-results.json
-report.md
+results*.json
+report*.md
+*.log
