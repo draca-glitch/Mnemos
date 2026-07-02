@@ -4,6 +4,14 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.13.0] - 2026-07-02 (per-phase LLM key + temperature omission: hybrid local/cloud consolidation)
+
+Enables routing a single Nyx phase to a different provider than the rest, which the fidelity-critical MERGE phase needs: a strong cloud model that obeys one-fact-per-line and preserves facts under compression, while base/weave/contradict/triage stay on a cheap local pool. Motivated by a live finding that the local 30B over-compressed real clusters (45->16 / 85->19 line collapse) and mislabeled prefixes on merge.
+
+### Added
+- **Per-phase LLM API key** (`MNEMOS_LLM_API_KEY_<PHASE>`). `_get_config` already resolved per-phase model and URL overrides but not the key, so hybrid routing only worked within a single auth domain. Now MERGE can carry a real cloud token (e.g. an Anthropic `sk-ant-` key against `api.anthropic.com/v1/chat/completions`) that reaches only the cloud endpoint, while the global `MNEMOS_LLM_API_KEY` stays a throwaway for the local pool. The secret never touches the local router.
+- **Per-phase temperature omission** (`MNEMOS_LLM_OMIT_TEMPERATURE[_<PHASE>]`). Some newer models reject `temperature` as deprecated and 400 the entire request (observed: Anthropic Sonnet 5 on the OpenAI-compat endpoint). When set, `chat()` drops `temperature` from the payload for that phase; the other phases keep it. Regression tests in `tests/test_llm_config.py`.
+
 ## [10.12.1] - 2026-07-02 (fixes: load_embeddings rowid crash + over-aggressive store dedup + single-line CML on merge/store)
 
 ### Fixed

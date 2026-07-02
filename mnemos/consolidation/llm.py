@@ -69,9 +69,12 @@ def _get_config(phase=None):
     """Read LLM config from environment. Returns dict, may have empty values.
 
     If `phase` is given (e.g. "MERGE", "WEAVE", "CONTRADICT", "SYNTHESIZE"),
-    per-phase env var overrides are consulted first:
-    MNEMOS_LLM_MODEL_<PHASE> and MNEMOS_LLM_API_URL_<PHASE>. Both fall back
-    to the non-scoped MNEMOS_LLM_MODEL / MNEMOS_LLM_API_URL if unset.
+    per-phase env var overrides are consulted first: MNEMOS_LLM_MODEL_<PHASE>,
+    MNEMOS_LLM_API_URL_<PHASE>, and MNEMOS_LLM_API_KEY_<PHASE>. Each falls back
+    to the non-scoped MNEMOS_LLM_MODEL / _API_URL / _API_KEY if unset. The
+    per-phase key lets one phase (e.g. MERGE) target a cloud provider that
+    needs a real token while the other phases stay on a local endpoint whose
+    key is a throwaway; the secret never reaches the local endpoint.
 
     `phase_model_explicit` lets chat() tell an explicit per-phase override
     apart from a fallback, so the phase override can win over the fast
@@ -80,6 +83,10 @@ def _get_config(phase=None):
     phase_suffix = f"_{phase.upper()}" if phase else ""
     phase_model = os.environ.get(f"MNEMOS_LLM_MODEL{phase_suffix}") if phase else None
     phase_url = os.environ.get(f"MNEMOS_LLM_API_URL{phase_suffix}") if phase else None
+    phase_key = os.environ.get(f"MNEMOS_LLM_API_KEY{phase_suffix}") if phase else None
+    phase_omit_temp = os.environ.get(f"MNEMOS_LLM_OMIT_TEMPERATURE{phase_suffix}") if phase else None
+    omit_temp = (phase_omit_temp if phase_omit_temp is not None
+                 else os.environ.get("MNEMOS_LLM_OMIT_TEMPERATURE", "0"))
     url = phase_url or os.environ.get("MNEMOS_LLM_API_URL", DEFAULT_API_URL)
 
     # v10.4.0: default model preset for the OpenAI endpoint only. If the
@@ -92,11 +99,12 @@ def _get_config(phase=None):
 
     return {
         "url": url,
-        "key": os.environ.get("MNEMOS_LLM_API_KEY", ""),
+        "key": phase_key or os.environ.get("MNEMOS_LLM_API_KEY", ""),
         "model": phase_model or env_model or openai_default or DEFAULT_MODEL,
         "fast_model": os.environ.get("MNEMOS_LLM_FAST_MODEL")
                       or env_model or openai_default or DEFAULT_FAST_MODEL,
         "phase_model_explicit": bool(phase_model),
+        "omit_temperature": str(omit_temp).lower() in ("1", "true", "yes", "on"),
     }
 
 
@@ -151,8 +159,12 @@ def chat(messages, max_tokens=1024, temperature=0.3, fast=False, phase=None, tim
         "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
-        "temperature": temperature,
     }
+    # Some newer models (e.g. Anthropic Sonnet 5 on the OpenAI-compat endpoint)
+    # reject `temperature` as deprecated and 400 the whole call. Omit it for such
+    # endpoints via MNEMOS_LLM_OMIT_TEMPERATURE[_<PHASE>].
+    if not cfg.get("omit_temperature"):
+        payload["temperature"] = temperature
     body = json.dumps(payload).encode("utf-8")
     headers = {
         "authorization": f"Bearer {cfg['key']}",
