@@ -4,6 +4,19 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.19.0] - 2026-07-03 (doctor verifies content/vector coherence)
+
+### Added
+- Doctor check: every active memory's embed-text hash is re-derived from
+  current content and compared to `embed_meta.text_hash` (recorded at
+  embed time since v10.6 "so staleness is detectable later"; this is the
+  later). Catches content mutated without a re-embed: direct SQL writes
+  bypassing the API, or a write-path bug, both previously invisible to
+  retrieval and to every other check. `doctor --migrate` re-embeds
+  flagged rows. Near-total mismatch on stores of 20+ checkable rows is
+  reported as an embed-text format change across versions rather than
+  row corruption; rows predating hash tracking are skipped.
+
 ## [10.18.0] - 2026-07-03 (memoized NLI finder: the nightly sweep stops re-proving old negatives)
 
 ### Added

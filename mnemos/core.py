@@ -1834,6 +1834,72 @@ class Mnemos:
         else:
             report["checks"].append(f"Embeddings: 100% coverage ({cov.get('embedded', 0)} vectors)")
 
+        # --- Content/vector coherence (v10.19.0) ---
+        # _store_embedding records text_hash "so staleness is detectable
+        # later"; this is the later. Re-deriving each active memory's
+        # embed-text hash from current content catches silent divergence:
+        # content mutated without a re-embed (direct SQL writes bypassing
+        # the API, or a write-path bug), which retrieval cannot see and
+        # which no other check covers. Near-total mismatch means the
+        # embed-text FORMAT changed between versions, not row corruption,
+        # and is reported as such.
+        try:
+            rows = conn.execute(
+                "SELECT m.id, m.project, m.content, m.tags, m.type, m.layer, "
+                "e.text_hash FROM memories m JOIN embed_meta e "
+                "ON e.source_db='memory' AND e.source_id = m.id "
+                "WHERE m.status='active' AND m.namespace = ?",
+                (self.namespace,),
+            ).fetchall()
+            mismatched = []
+            checkable = 0
+            for r in rows:
+                if not r["text_hash"]:
+                    continue  # predates hash tracking
+                checkable += 1
+                expect = embed_text_hash(prep_memory_text(
+                    r["project"], r["content"] or "", r["tags"] or "",
+                    mem_type=r["type"] or "", layer=r["layer"] or ""))
+                if expect != r["text_hash"]:
+                    mismatched.append(r["id"])
+            if not mismatched:
+                report["checks"].append(
+                    f"Content/vector coherence: {checkable} active memories verified")
+            elif checkable >= 20 and len(mismatched) > checkable * 0.9:
+                # Ratio semantics need a population; on tiny stores a single
+                # tampered row is 100% and must be treated as tampering.
+                report["issues"].append(
+                    f"Content/vector coherence: {len(mismatched)}/{checkable} "
+                    "mismatched. Near-total mismatch means the embed-text "
+                    "format changed across versions; re-embed the store "
+                    "rather than treating rows as corrupted")
+            else:
+                report["issues"].append(
+                    f"Content/vector coherence: {len(mismatched)} active "
+                    f"memories whose content no longer matches their stored "
+                    f"embedding (ids {mismatched[:10]}"
+                    f"{'...' if len(mismatched) > 10 else ''}): content was "
+                    "changed without a re-embed")
+                if migrate:
+                    repaired = 0
+                    for mid in mismatched:
+                        r = conn.execute(
+                            "SELECT project, content, tags, type, layer "
+                            "FROM memories WHERE id = ?", (mid,)).fetchone()
+                        text = prep_memory_text(
+                            r["project"], r["content"] or "", r["tags"] or "",
+                            mem_type=r["type"] or "", layer=r["layer"] or "")
+                        vecs = embed([text], prefix="passage")
+                        if vecs and vecs[0]:
+                            self.store._store_embedding(
+                                mid, vecs[0], text_hash=embed_text_hash(text))
+                            repaired += 1
+                    report["migrations_applied"].append(
+                        f"re-embedded {repaired}/{len(mismatched)} "
+                        "hash-mismatched memories")
+        except Exception as e:
+            report["issues"].append(f"Coherence check failed: {e}")
+
         # --- Vector model provenance ---
         # A different-dims model fails loudly at insert; a same-dims swap is
         # the dangerous case: old and new vectors coexist and every KNN
