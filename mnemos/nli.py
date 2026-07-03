@@ -28,7 +28,9 @@ import re
 import threading
 
 from .embed import embed
-from .constants import NLI_EN_MODEL, NLI_MULTI_MODEL, NLI_MAX_LENGTH
+from .constants import (
+    NLI_EN_MODEL, NLI_MULTI_MODEL, NLI_MAX_LENGTH, DISABLE_MEM_ARENA,
+)
 
 _EN_STOPWORDS = re.compile(
     r"\b(the|and|is|are|was|were|of|to|in|for|with|on|at|by|from|that|this|"
@@ -128,6 +130,21 @@ class _TorchNliScorer:
         return float(probs[self.idx["entail"]]), float(probs[self.idx["contra"]])
 
 
+def _onnx_session_options():
+    """Session options for the NLI ONNX sessions, or None for defaults.
+
+    MNEMOS_DISABLE_MEM_ARENA=1 disables the CPU memory arena so RSS stays
+    bounded during active periods (same contract as the embedder and
+    reranker; see constants.DISABLE_MEM_ARENA).
+    """
+    if not DISABLE_MEM_ARENA:
+        return None
+    import onnxruntime as ort
+    so = ort.SessionOptions()
+    so.enable_cpu_mem_arena = False
+    return so
+
+
 class _OnnxNliScorer:
     """onnxruntime-backed scorer over a local export (no torch needed)."""
 
@@ -147,6 +164,7 @@ class _OnnxNliScorer:
                 self.idx["contra"] = int(i)
         self.session = ort.InferenceSession(
             os.path.join(onnx_dir, "model.onnx"),
+            sess_options=_onnx_session_options(),
             providers=["CPUExecutionProvider"])
         self._input_names = {i.name for i in self.session.get_inputs()}
 

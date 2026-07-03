@@ -287,6 +287,27 @@ class TestWeaveHygiene:
         assert layer == "episodic"
 
 
+class TestMemArenaOptOut:
+    """MNEMOS_DISABLE_MEM_ARENA (10.17.1, contributed by balaianu/Mnemos,
+    extended here to the NLI ONNX sessions)."""
+
+    def test_default_is_no_session_options(self, monkeypatch):
+        monkeypatch.setattr(nli, "DISABLE_MEM_ARENA", False)
+        assert nli._onnx_session_options() is None
+
+    def test_flag_disables_cpu_mem_arena(self, monkeypatch):
+        monkeypatch.setattr(nli, "DISABLE_MEM_ARENA", True)
+        so = nli._onnx_session_options()
+        assert so is not None
+        assert so.enable_cpu_mem_arena is False
+
+    def test_fastembed_still_exposes_the_option(self):
+        # The embedder/reranker pass enable_cpu_mem_arena as a fastembed
+        # kwarg; this guards the contract across fastembed upgrades.
+        from fastembed.common.onnx_model import OnnxModel
+        assert "enable_cpu_mem_arena" in OnnxModel.EXPOSED_SESSION_OPTIONS
+
+
 class TestUsefulLoop:
     def test_get_marks_recent_retrievals_useful(self, tmp_path):
         store = _store(tmp_path)

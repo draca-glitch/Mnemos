@@ -9,7 +9,7 @@ batch of 20 documents on CPU.
 import threading
 import time
 
-from .constants import RERANKER_MODEL, FASTEMBED_CACHE
+from .constants import RERANKER_MODEL, FASTEMBED_CACHE, DISABLE_MEM_ARENA
 from . import _resource
 
 _instance = None
@@ -24,7 +24,13 @@ def _get_reranker():
             _resource.guard_memory()
             try:
                 from fastembed.rerank.cross_encoder import TextCrossEncoder
-                _instance = TextCrossEncoder(model_name=RERANKER_MODEL, cache_dir=FASTEMBED_CACHE)
+                kwargs = {
+                    "model_name": RERANKER_MODEL,
+                    "cache_dir": FASTEMBED_CACHE,
+                }
+                if DISABLE_MEM_ARENA:
+                    kwargs["enable_cpu_mem_arena"] = False
+                _instance = TextCrossEncoder(**kwargs)
             except ImportError:
                 raise ImportError(
                     "Reranker requires fastembed[rerank]. Install with: "

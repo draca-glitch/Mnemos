@@ -10,7 +10,9 @@ import hashlib
 import threading
 import time
 
-from .constants import FASTEMBED_MODEL, FASTEMBED_CACHE, FASTEMBED_DIMS
+from .constants import (
+    FASTEMBED_MODEL, FASTEMBED_CACHE, FASTEMBED_DIMS, DISABLE_MEM_ARENA,
+)
 from . import _resource
 
 _instance = None
@@ -24,10 +26,13 @@ def _get_model():
         if _instance is None:
             _resource.guard_memory()
             from fastembed import TextEmbedding
-            _instance = TextEmbedding(
-                model_name=FASTEMBED_MODEL,
-                cache_dir=FASTEMBED_CACHE,
-            )
+            kwargs = {
+                "model_name": FASTEMBED_MODEL,
+                "cache_dir": FASTEMBED_CACHE,
+            }
+            if DISABLE_MEM_ARENA:
+                kwargs["enable_cpu_mem_arena"] = False
+            _instance = TextEmbedding(**kwargs)
         _last_used = time.monotonic()
         return _instance
 

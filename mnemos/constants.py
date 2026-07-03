@@ -102,6 +102,18 @@ NLI_CONTRA_THRESHOLD = float(os.environ.get("MNEMOS_NLI_CONTRA_THRESHOLD", "0.98
 NLI_DEDUP_THRESHOLD = float(os.environ.get("MNEMOS_NLI_DEDUP_THRESHOLD", "0.85"))
 NLI_DEDUP_MAX_CANDIDATES = int(os.environ.get("MNEMOS_NLI_DEDUP_MAX_CANDIDATES", "3"))
 
+# --- ONNX Runtime memory arena ---
+# ONNX Runtime's default CPU memory arena grows with use and never shrinks
+# while a session stays loaded, so RSS climbs during active periods and the
+# idle reaper never gets a window on a busy host (reported from a 7.3GB
+# system: 700MB -> 4.8GB RSS, OOM + swap; contributed by balaianu/Mnemos).
+# MNEMOS_DISABLE_MEM_ARENA=1 passes enable_cpu_mem_arena=False to every
+# ONNX session Mnemos creates (e5 embedder, Jina reranker, both NLI
+# scorers): each inference allocates from the system and returns it.
+# Trade-off ~10-15% slower inference for bounded RSS. Opt-in, default 0,
+# same contract as MNEMOS_MODEL_IDLE_TTL and MNEMOS_MIN_FREE_MB.
+DISABLE_MEM_ARENA = os.environ.get("MNEMOS_DISABLE_MEM_ARENA", "0") == "1"
+
 # Dedup confirm tier: 'rerank' (legacy cross-encoder / vec fallback) or 'nli'.
 # Read at call time so tests and long-lived processes can flip it via env.
 DEDUP_CONFIRM_DEFAULT = "rerank"

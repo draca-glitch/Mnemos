@@ -4,6 +4,22 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.17.1] - 2026-07-03 (opt-out ONNX memory arena, all sessions)
+
+### Added
+- `MNEMOS_DISABLE_MEM_ARENA=1` disables the ONNX Runtime CPU memory arena
+  on every session Mnemos creates: the e5 embedder, the Jina reranker
+  (both via fastembed's exposed session options) and both NLI scorers
+  (direct `SessionOptions`). The arena grows during active inference and
+  never shrinks while a session stays loaded, so on busy constrained
+  hosts RSS climbs past what the idle reaper can ever reclaim (reported:
+  700MB to 4.8GB on a 7.3GB system). With the flag, each inference
+  allocates from the system and returns it: bounded RSS for ~10-15%
+  slower inference. Opt-in, default off, same contract as
+  `MNEMOS_MODEL_IDLE_TTL` and `MNEMOS_MIN_FREE_MB`.
+  Embedder/reranker portion contributed by the balaianu/Mnemos fork;
+  extended here to the 10.16+ NLI ONNX sessions the fork predates.
+
 ## [10.17.0] - 2026-07-03 (zero-LLM daily consolidation cycle)
 
 The daily Nyx cycle now runs with zero LLM calls: cosine nominates (by

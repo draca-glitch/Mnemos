@@ -14,6 +14,13 @@ embedder and reranker in RAM.
                             this floor, so the search path degrades to a
                             lighter stage instead of risking an OOM kill.
                             0 (default) = off.
+    MNEMOS_DISABLE_MEM_ARENA  disable the ONNX Runtime CPU memory arena on
+                            every session Mnemos creates (embedder, reranker,
+                            NLI scorers), bounding RSS during ACTIVE periods
+                            where the idle reaper never gets a window.
+                            ~10-15% slower inference. 0 (default) = off.
+                            (Lives in constants.py; listed here because this
+                            docstring is the resource-controls index.)
 
 Reclaim mechanics (measured): dropping the model reference plus gc frees the
 ONNX session and returns its arena to the OS; malloc_trim then hands back the
