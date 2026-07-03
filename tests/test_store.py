@@ -19,13 +19,21 @@ import pytest
 
 @pytest.fixture
 def mnemos_with_tmpdb():
-    """Fresh Mnemos instance with a throwaway SQLite file."""
+    """Fresh Mnemos instance with a throwaway SQLite file.
+
+    Constructed with an explicit store path. The old env-var route
+    (os.environ["MNEMOS_DB"] = path, then import) only worked when this
+    module was the first to import mnemos.core; under pytest collection
+    any earlier-collected test file imports it first, DEFAULT_DB_PATH
+    freezes to the real default, and every test run bloats the
+    developer's actual DB with fixture memories (observed on two
+    machines, 2026-07-03: 419 rows on one, 174 on another).
+    """
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
-    os.environ["MNEMOS_DB"] = path
-    # Import only after MNEMOS_DB is set so constants.DEFAULT_DB_PATH picks it up
     from mnemos.core import Mnemos
-    m = Mnemos()
+    from mnemos.storage.sqlite_store import SQLiteStore
+    m = Mnemos(store=SQLiteStore(db_path=path))
     yield m
     m.close()
     for suffix in ("", "-journal", "-wal", "-shm"):

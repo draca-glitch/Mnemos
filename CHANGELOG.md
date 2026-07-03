@@ -4,6 +4,20 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.19.1] - 2026-07-03 (second test-fixture DB leak closed)
+
+### Fixed
+- `tests/test_store.py` carried the same fixture defect fixed for the
+  tier2 tests in 10.17.0 and missed in that sweep: setting MNEMOS_DB in
+  the environment before importing only isolates when that module is the
+  first to import mnemos.core, which under pytest collection it never
+  is. Every suite run leaked fixture memories into the developer's real
+  default DB (found independently on a second machine the same day: 174
+  rows there, 419 on the first; always namespace 'default', real
+  namespaces untouched). Both fixtures now construct
+  `SQLiteStore(db_path=...)` explicitly; a repo-wide grep confirms no
+  env-var DB fixtures remain.
+
 ## [10.19.0] - 2026-07-03 (doctor verifies content/vector coherence)
 
 ### Added
