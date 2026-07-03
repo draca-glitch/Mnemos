@@ -1074,17 +1074,61 @@ def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge,
     if finder_mode == "nli" and nli.is_available():
         # Line-level NLI scores each cosine-gated pair; only pairs the
         # finder flags reach the LLM judge. Recall-first threshold - the
-        # judge owns precision. The pair cap bounds CPU cost on big stores.
-        scored = []
-        for mid_a, mid_b, cos in candidates[:NLI_FINDER_MAX_PAIRS]:
-            p = nli.line_max_contradiction(
-                mem_by_id[mid_a].get("content", ""),
-                mem_by_id[mid_b].get("content", ""))
-            if p is not None and p >= NLI_FINDER_THRESHOLD:
+        # judge owns precision. Scores are memoized in nli_scan_cache
+        # (v10.18.0), keyed on content hashes: a pair's score is a pure
+        # function of the two contents, so unchanged pairs cost nothing
+        # on later runs. NLI_FINDER_MAX_PAIRS therefore budgets only NEW
+        # scorings; never-scored pairs beyond the budget backfill across
+        # subsequent nights (measured before the cache: a 342-fact store
+        # re-scored ~185 static pairs for ~31 minutes, nightly).
+        def _chash(mid):
+            return text_hash(mem_by_id[mid].get("content", "") or "")
+
+        cache = {}
+        try:
+            for pmin, pmax, ah, bh, p in conn.execute(
+                    "SELECT pair_min, pair_max, a_hash, b_hash, p_contra "
+                    "FROM nli_scan_cache"):
+                cache[(pmin, pmax)] = (ah, bh, p)
+        except Exception:
+            pass
+
+        scored, upserts = [], []
+        fresh_budget = NLI_FINDER_MAX_PAIRS
+        hits = deferred = 0
+        for mid_a, mid_b, cos in candidates:
+            key = (min(mid_a, mid_b), max(mid_a, mid_b))
+            ha, hb = _chash(key[0]), _chash(key[1])
+            hit = cache.get(key)
+            if hit and hit[0] == ha and hit[1] == hb:
+                hits += 1
+                p = hit[2]
+            elif fresh_budget > 0:
+                fresh_budget -= 1
+                p = nli.line_max_contradiction(
+                    mem_by_id[mid_a].get("content", ""),
+                    mem_by_id[mid_b].get("content", ""))
+                if p is None:
+                    continue
+                upserts.append((key[0], key[1], ha, hb, p))
+            else:
+                deferred += 1
+                continue
+            if p >= NLI_FINDER_THRESHOLD:
                 scored.append((mid_a, mid_b, cos, p))
+        if upserts and execute:
+            try:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO nli_scan_cache "
+                    "(pair_min, pair_max, a_hash, b_hash, p_contra) "
+                    "VALUES (?, ?, ?, ?, ?)", upserts)
+                conn.commit()
+            except Exception as e:
+                log(f"  Scan cache write failed ({e}); scores not memoized")
         scored.sort(key=lambda x: x[3], reverse=True)
-        log(f"  NLI finder: {len(scored)}/{min(len(candidates), NLI_FINDER_MAX_PAIRS)} "
-            f"pairs flagged at P(contra) >= {NLI_FINDER_THRESHOLD}")
+        log(f"  NLI finder: {len(scored)} flagged at P(contra) >= "
+            f"{NLI_FINDER_THRESHOLD} ({hits} cached, {len(upserts)} newly "
+            f"scored, {deferred} deferred to backfill)")
         candidates = [(a, b, c) for a, b, c, _ in scored]
     elif finder_mode == "nli":
         log("  NLI finder requested but transformers/torch unavailable; "

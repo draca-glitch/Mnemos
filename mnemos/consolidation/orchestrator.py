@@ -69,10 +69,50 @@ def _migrate_nyx_schema(conn):
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_links_type ON memory_links(relation_type)")
+    # v10.18.0: memoization for the phase-4 NLI finder. A pair's score is a
+    # pure function of the two contents, so it is cached keyed on content
+    # hashes; the nightly finder only re-scores pairs whose content changed
+    # or that were never scored (backfill under the per-run budget).
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS nli_scan_cache (
+            pair_min INTEGER NOT NULL,
+            pair_max INTEGER NOT NULL,
+            a_hash TEXT NOT NULL,
+            b_hash TEXT NOT NULL,
+            p_contra REAL NOT NULL,
+            scanned_at TEXT DEFAULT (datetime('now', 'localtime')),
+            PRIMARY KEY (pair_min, pair_max)
+        )
+    """)
     conn.commit()
 
 
 # --- Phase 6: Bookkeeping (no LLM required) ---
+
+def cleanup_scan_cache(conn, execute=True):
+    """Drop nli_scan_cache rows whose pair references a non-active memory.
+
+    Mirrors cleanup_stale_links: archived and deleted memories can never
+    re-enter the phase-4 candidate set, so their cached scores are dead
+    weight. Returns the number of rows removed (or that would be).
+    """
+    where = (
+        "NOT EXISTS (SELECT 1 FROM memories a WHERE a.id = nli_scan_cache.pair_min "
+        "AND a.status = 'active') OR "
+        "NOT EXISTS (SELECT 1 FROM memories b WHERE b.id = nli_scan_cache.pair_max "
+        "AND b.status = 'active')"
+    )
+    try:
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM nli_scan_cache WHERE {where}"
+        ).fetchone()[0]
+        if count and execute:
+            conn.execute(f"DELETE FROM nli_scan_cache WHERE {where}")
+            conn.commit()
+        return count
+    except Exception:
+        return 0
+
 
 def _vec_join_col(conn):
     """Detect whether embed_vec uses 'id' (explicit PK) or 'rowid' (implicit).
@@ -481,6 +521,10 @@ def run_nyx_cycle(
         stale_links = cleanup_stale_links(conn, execute=execute)
         if stale_links:
             log(f"  {verb}removed {stale_links} stale links")
+
+        dead_cache = cleanup_scan_cache(conn, execute=execute)
+        if dead_cache:
+            log(f"  {verb}dropped {dead_cache} dead scan-cache rows")
 
         phase_stats["phase6"] = {
             "orphans_cleaned": orphaned,

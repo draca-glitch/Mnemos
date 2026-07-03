@@ -4,6 +4,20 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.18.0] - 2026-07-03 (memoized NLI finder: the nightly sweep stops re-proving old negatives)
+
+### Added
+- `nli_scan_cache`: the phase-4 finder's line-level score is a pure
+  function of the two contents, so it is memoized keyed on content
+  hashes. Unchanged pairs cost nothing on later runs; a changed hash
+  invalidates exactly that pair. `MNEMOS_NLI_FINDER_MAX_PAIRS` now
+  budgets only NEW scorings, and never-scored pairs backfill across
+  subsequent nights. Measured before the cache on the production store:
+  ~185 static pairs re-scored for ~31 minutes, nightly; steady state
+  after: seconds, proportional to the day's new memories. Dry runs read
+  the cache but never write it. Phase 6 drops rows referencing archived
+  memories (cleanup_scan_cache, mirroring stale-link cleanup).
+
 ## [10.17.3] - 2026-07-03 (phase 4 remembers its verdicts)
 
 ### Fixed

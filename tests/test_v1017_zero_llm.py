@@ -240,6 +240,50 @@ class TestJudgeQueue:
         assert stats["candidates"] >= 1
 
 
+class TestScanCache:
+    """nli_scan_cache memoization for the phase-4 finder (10.18.0)."""
+
+    def _fixture(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MNEMOS_NYX_CONTRADICT_FINDER", "nli")
+        store, conn, mem_by_id, embeddings = _phase4_fixture(tmp_path)
+        from mnemos.consolidation.orchestrator import _migrate_nyx_schema
+        _migrate_nyx_schema(conn)
+        monkeypatch.setattr(phases.nli, "is_available", lambda: True)
+        calls = []
+
+        def fake_score(a, b, top_k=8):
+            calls.append((a, b))
+            return 0.5  # below threshold: not flagged, not queued
+
+        monkeypatch.setattr(phases.nli, "line_max_contradiction", fake_score)
+        return conn, mem_by_id, embeddings, calls
+
+    def test_second_run_scores_nothing(self, tmp_path, monkeypatch):
+        conn, mem_by_id, embeddings, calls = self._fixture(tmp_path, monkeypatch)
+        phase_contradict(conn, embeddings, mem_by_id, is_surge=False,
+                         execute=True, judge="queue")
+        assert len(calls) == 1
+        phase_contradict(conn, embeddings, mem_by_id, is_surge=False,
+                         execute=True, judge="queue")
+        assert len(calls) == 1  # cache hit, no new scoring
+
+    def test_content_change_invalidates(self, tmp_path, monkeypatch):
+        conn, mem_by_id, embeddings, calls = self._fixture(tmp_path, monkeypatch)
+        phase_contradict(conn, embeddings, mem_by_id, is_surge=False,
+                         execute=True, judge="queue")
+        mem_by_id[1]["content"] = "F: the disk is 1TB now"
+        phase_contradict(conn, embeddings, mem_by_id, is_surge=False,
+                         execute=True, judge="queue")
+        assert len(calls) == 2  # hash mismatch forced a re-score
+
+    def test_dry_run_does_not_write_cache(self, tmp_path, monkeypatch):
+        conn, mem_by_id, embeddings, calls = self._fixture(tmp_path, monkeypatch)
+        phase_contradict(conn, embeddings, mem_by_id, is_surge=False,
+                         execute=False, judge="queue")
+        rows = conn.execute("SELECT COUNT(*) FROM nli_scan_cache").fetchone()[0]
+        assert rows == 0
+
+
 class TestWeaveHygiene:
     def _weave_fixture(self, tmp_path):
         store = _store(tmp_path)
