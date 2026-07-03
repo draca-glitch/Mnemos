@@ -4,6 +4,11 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.16.1] - 2026-07-03 (documentation)
+
+### Changed
+- Documentation sweep reflecting v10.15-10.16: README store-path diagram, ARCHITECTURE NLI-layer section and updated dedup/contradiction/phase-4 mechanics, features/philosophy/usage updates including the explicit design policy (prefer local discriminative scorers over LLM calls; the currency is RAM) and the NLI configuration reference.
+
 ## [10.16.0] - 2026-07-03 (ONNX backend for the NLI layer; self-healing temperature rejection)
 
 ### Added

@@ -114,7 +114,17 @@ That is the entire surface: CRUD-plus-search on the hot path, pattern rewrite an
                                 ┌──────────────┐
                                 │   Results    │
                                 └──────────────┘
+
+     Store path (memory_store, optional NLI decision layer v10.15+):
+
+        new memory ──► 3-way candidate pool ──► NLI (DeBERTa-v3, ONNX)
+                       (FTS5 + CML + vec)       ├─ bidirectional entailment
+                                                │   ≥ 0.85 → duplicate, block
+                                                └─ max-direction P(contra)
+                                                    ≥ 0.98 → warn + link
 ```
+
+Search asks "what is relevant?" (lexical + semantic + topicality). The store decision asks "is this the same claim, or the opposite claim?", which is an entailment question, so it runs on NLI models rather than the reranker. English content routes to an English checkpoint, everything else to a multilingual one.
 
 On the default SQLite backend, everything (content, FTS index, 1024-dim vectors, memory links, Nyx consolidation history) lives in one SQLite file and every write is a single atomic transaction. Full layered architecture, data model schema, retrieval pipeline mechanics, and storage-backend tradeoffs in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Feature reference (hybrid pipeline, model rationale, temporal decay, Nyx phases, contradiction detection, auto-widen, dedup, forgetting) in [docs/features.md](docs/features.md).
 

@@ -137,6 +137,25 @@ export MNEMOS_LLM_MODEL_SYNTHESIZE=claude-opus-4.6    # Phase 5 creative generat
 
 Any unset phase variable falls back to `MNEMOS_LLM_MODEL`. Each phase call is **stateless inference**, the LLM receives the cluster or pair it needs to reason about, nothing else; nothing persists between calls; the memory state lives in the database, not in the model. The phase-specific tested recommendations (what actually got benchmarked for each phase and which models performed best) live in [`ARCHITECTURE.md#per-phase-model-choice-what-was-tested`](ARCHITECTURE.md#per-phase-model-choice-what-was-tested).
 
+Model families that reject the `temperature` parameter outright (some newer OpenAI-compatible endpoints do) are handled automatically since v10.16.0: on the first rejection `chat()` retries without the parameter and remembers the endpoint+model for the rest of the process. `MNEMOS_LLM_OMIT_TEMPERATURE[_<PHASE>]=1` remains as an explicit override that skips even that first probe.
+
+Since v10.15.1 every Nyx tunable (clustering thresholds, weave similarity/top-K, call budgets, contradiction gates) is an env-overridable constant in `mnemos/constants.py`, the single settings surface; see that file for the full list of `MNEMOS_*` knobs.
+
+### NLI decision layer (optional, v10.15+)
+
+Move the store decisions (duplicate? contradiction?) from the topicality reranker onto natural-language-inference models:
+
+```bash
+pip install -e .[nli]                        # onnxruntime + tokenizer, no torch
+python scripts/export_nli_onnx.py            # one-time model export (needs .[nli-export])
+                                             # or copy ~/.cache/mnemos/nli-onnx from another machine
+export MNEMOS_DEDUP_CONFIRM=nli              # dedup confirm = bidirectional entailment
+export MNEMOS_CONTRADICT_MODE=nli            # contradiction = max-direction P(contra)
+export MNEMOS_NYX_CONTRADICT_FINDER=nli      # Phase 4 candidate finder = line-level NLI
+```
+
+Tuning knobs (defaults are the benched values): `MNEMOS_NLI_DEDUP_THRESHOLD` (0.85), `MNEMOS_NLI_CONTRA_THRESHOLD` (0.98), `MNEMOS_NLI_FINDER_THRESHOLD` (0.8), `MNEMOS_NLI_BACKEND` (auto/onnx/torch), `MNEMOS_NLI_ONNX_DIR`, `MNEMOS_NLI_EN_MODEL` / `MNEMOS_NLI_MULTI_MODEL`. Pairs naturally with the [English-primary store convention](english-primary.md), which routes nearly every decision to the stronger English checkpoint. Mechanism and bench numbers in [`ARCHITECTURE.md#the-nli-decision-layer-v1015`](ARCHITECTURE.md#the-nli-decision-layer-v1015); RAM cost under [Memory usage](#memory-usage).
+
 ## Session hooks (Claude Code)
 
 Inject relevant memories at session start automatically:
@@ -176,7 +195,8 @@ Mnemos is CPU-only but loads real ONNX models into RAM. Summary:
 - **Without reranker (`MNEMOS_ENABLE_RERANK=0`):** ~1-1.2 GB resident. Runs on a 2 GB+ Raspberry Pi. Trades ~0.5 pp of R@5 for ~500 MB less RAM.
 - **Idle unload (`MNEMOS_MODEL_IDLE_TTL=<seconds>`, v10.5.0):** a background reaper drops the embedder and reranker after they sit idle that long and returns the resident RAM above to the OS, so a mostly-idle server falls back toward ~100 MB between queries instead of holding the model indefinitely. The next query reloads (a one-off cost, roughly 1-2 s on a fast CPU, more on small hardware). Pair with `MNEMOS_EAGER_WARMUP=0` to also skip the startup load, and `MNEMOS_MIN_FREE_MB=<floor>` to refuse loading under memory pressure (search degrades to vec-only then FTS5 instead of risking an OOM). All default off.
 - **Disk:** ~800 MB total for both ONNX models (e5-large embedder + Jina cross-encoder), downloaded once on first use and cached under `~/.cache/fastembed`.
-- **Sub-1 GB hardware:** not designed for it out of the box. Swap to a smaller embedder (e.g. `BAAI/bge-small-en-v1.5`) via `MNEMOS_EMBED_MODEL` if you truly need 512 MB total; retrieval quality drops but Mnemos still runs.
+- **With the NLI decision layer (optional, v10.15+):** the exported NLI models add ~1.9 GB disk (`~/.cache/mnemos/nli-onnx`) and, once a store operation first needs them, ~0.7 GB (English model) to ~1.8 GB (both models) resident on top of the numbers above. They load lazily and independently; an English-primary store may never load the multilingual one. This is the deliberate trade behind the whole design: every decision that CAN be a local discriminative scorer instead of an LLM call is one, and the currency paid is RAM, the resource a self-hosted box usually has spare. What it buys is determinism, millisecond-class latency, and zero API calls or keys anywhere in the store/search path.
+- **Sub-1 GB hardware:** not designed for it out of the box. Swap to a smaller embedder (e.g. `BAAI/bge-small-en-v1.5`) via `MNEMOS_EMBED_MODEL` if you truly need 512 MB total; retrieval quality drops but Mnemos still runs. Leave the NLI layer off on such hardware; the legacy scorers cover dedup/contradiction with no extra models.
 
 Full per-component breakdown (Python + Mnemos, SQLite + sqlite-vec, embedder, reranker) and sub-1 GB configuration notes in [`ARCHITECTURE.md#ram-and-disk-footprint`](ARCHITECTURE.md#ram-and-disk-footprint).
 

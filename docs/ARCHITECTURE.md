@@ -29,18 +29,19 @@
                      │
 ┌────────────────────▼────────────────────────────────────────┐
 │                     mnemos.core.Mnemos                       │
-│  • 3-way dedup on store                                      │
+│  • 3-way dedup on store (NLI confirm tier)                   │
 │  • BM25 + vector search (FTS + vec + RRF + rerank)           │
 │  • Auto-widen on thin results                                │
-│  • Contradiction detection                                   │
+│  • Contradiction detection (NLI)                             │
 │  • Dynamic importance bumping                                │
-└────────┬───────────────────┬──────────────────────┬─────────┘
-         │                   │                       │
-┌────────▼──────┐  ┌─────────▼────────┐  ┌──────────▼──────┐
-│ mnemos.embed  │  │  mnemos.rerank   │  │  mnemos.query   │
-│  (FastEmbed   │  │  (Jina cross-    │  │  (FTS5 query    │
-│   e5-large)   │  │   encoder v2)    │  │   builder)      │
-└───────────────┘  └──────────────────┘  └─────────────────┘
+└───┬──────────────┬───────────────┬───────────────┬──────────┘
+    │              │               │               │
+┌───▼─────────┐ ┌──▼────────────┐ ┌▼─────────────┐ ┌▼─────────────┐
+│mnemos.embed │ │ mnemos.rerank │ │ mnemos.nli   │ │ mnemos.query │
+│ (FastEmbed  │ │ (Jina cross-  │ │ (NLI dedup/  │ │ (FTS5 query  │
+│  e5-large)  │ │  encoder v2,  │ │  contradict, │ │  builder)    │
+│             │ │  search only) │ │  ONNX)       │ │              │
+└─────────────┘ └───────────────┘ └──────────────┘ └──────────────┘
                                                   │
 ┌─────────────────────────────────────────────────▼───────────┐
 │                  mnemos.storage.MnemosStore                  │
@@ -138,7 +139,12 @@ Every `memory_store()` call runs a pre-insert dedup pass before writing:
 2. **CML-format subject matching**, if the new memory's CML prefix + subject (`F:server→db-prod-01`) exactly matches an existing memory's subject, they are almost certainly the same topic
 3. **Vector cosine similarity** against the embedding index
 
-Candidates from all three signals are pooled and passed through the Jina cross-encoder for a final relevance score. If the top score exceeds the dedup threshold, the new memory is merged into (or flagged as duplicate of) the existing one. The three signals catch different failure modes: keyword overlap finds verbatim repeats, subject matching finds same-topic different-phrasing, and vector similarity finds semantic paraphrases. A single one of them missing a duplicate is normal; all three missing it is rare.
+Candidates from all three signals are pooled and confirmed by a final scorer. The three signals catch different failure modes: keyword overlap finds verbatim repeats, subject matching finds same-topic different-phrasing, and vector similarity finds semantic paraphrases. A single one of them missing a duplicate is normal; all three missing it is rare.
+
+The confirm tier has two modes:
+
+- **`MNEMOS_DEDUP_CONFIRM=nli` (recommended, v10.15+)**: bidirectional entailment through the NLI layer, a candidate blocks the store only when each side entails the other (min-direction P(entailment) >= `MNEMOS_NLI_DEDUP_THRESHOLD`, default 0.85). This asks the duplicate question directly and stops the reranker failure mode of blocking structurally-similar-but-distinct facts (bench: 1 false positive vs 16-21 false blocks for distance-based confirmation). When NLI says "not a duplicate" that verdict is final.
+- **Legacy (default)**: the pooled candidates are scored by the Jina cross-encoder (or raw vector distance when the reranker is disabled) and the top score is compared to the dedup threshold. Kept as the zero-extra-setup path.
 
 ### Real-time contradiction detection on store
 
@@ -146,9 +152,22 @@ Separately from dedup, every `memory_store()` call also checks whether the new m
 
 1. Vector similarity gate (L2 distance below `CONTRADICTION_VEC_THRESHOLD`)
 2. Same-project filter (cross-project topical overlap is almost always complementary, not contradictory, this is the dominant false-positive killer)
-3. Jina cross-encoder rerank for topical-match confidence
+3. A classification tier, selected by `MNEMOS_CONTRADICT_MODE`:
+   - **`nli` (recommended, v10.15+)**: max-direction P(contradiction) through the NLI layer; warn + link only at >= `MNEMOS_NLI_CONTRA_THRESHOLD` (default 0.98). A cross-encoder scores topicality ("same subject?"), which is why the legacy mode conflated agreement with conflict; an NLI model scores polarity ("opposite claims?"), which is the actual question (bench: AUC 0.94 vs 0.69).
+   - **`rerank` (default)** / **`llm`** / **`vec`**: the legacy tiers, Jina topical-match score with a high-score band, optionally refined by an LLM classifier.
 
 A conflict surfaces as a warning in the response to the caller plus a `memory_links` row with `relation_type='contradicts'` that the next Nyx cycle's Phase 4 batch pass will consider. This is the synchronous counterpart to Phase 4 Contradict: the on-store check catches an incoming memory conflicting with what is already in the store the moment it arrives; the batch pass catches slow-burn evolution that only becomes visible once enough related memories accumulate. Both write into the same `memory_links` infrastructure.
+
+### The NLI decision layer (v10.15+)
+
+`mnemos/nli.py` supplies the scorers behind the `nli` modes above and the Phase 4 finder. Design points:
+
+- **Two models, routed per comparison.** Content that reads as English (cheap stopword heuristic, `is_english()`) is scored by an English ANLI+FEVER-hardened DeBERTa-v3 checkpoint, the strongest benched; anything else goes to a multilingual XNLI mDeBERTa checkpoint (~100 languages). Both load lazily and independently. Pairing this with the [English-primary store convention](english-primary.md) puts the strong model on nearly every decision.
+- **Direction aggregation is load-bearing.** Contradiction takes the max over both premise/hypothesis orders (real conflicts score asymmetrically, benched 0.44 one way / 0.99 the other); duplicates take the min of both entailment directions (a duplicate entails mutually; a subset-fact does not, and correctly does not block).
+- **Line-level scoring for consolidated records** (`line_max_contradiction`): top-k cosine-preselected line pairs, max P(contradiction). Isolating conflicting statements rescues conflicts that whole-record scoring buries under surrounding text (benched: a real conflict scored 0.58 blob-level, 0.9956 line-level).
+- **Backends**: ONNX (preferred; onnxruntime is already in the dependency tree, models exported once via `scripts/export_nli_onnx.py` into `MNEMOS_NLI_ONNX_DIR`) or torch (`mnemos[nli-torch]`). ONNX fp32 is score-identical to torch (parity-gated: probability drift 1e-05, zero threshold flips on 114 bench pairs). int8 quantization is deliberately NOT offered: it collapses DeBERTa-v3 scoring to chance and was rejected by the same gate. `MNEMOS_NLI_BACKEND` pins `auto`/`onnx`/`torch`.
+- **Graceful degradation**: with no backend usable, every entry point returns None and the store path falls back to the legacy scorers.
+- The reranker is unaffected: topicality is the right signal for search ranking, so Jina v2 keeps that job. NLI replaced it only where the question is polarity, not relevance.
 
 ## The Nyx cycle
 
@@ -179,7 +198,12 @@ Scans pairs of memories from different projects for cross-category connections. 
 
 ### Phase 4. Contradict
 
-Scans same-project pairs that are topically similar (cosine above a contradict-specific threshold) and classifies their relationship. The LLM outputs one of four labels:
+Scans same-project decision/fact pairs and classifies their relationship. Candidate selection has two modes (`MNEMOS_NYX_CONTRADICT_FINDER`):
+
+- **`cosine` (default)**: pairs inside a similarity band (`CONTRADICT_MIN_SIM`..`CONTRADICT_MAX_SIM`). Cheap, but the band ceiling excludes near-identical pairs, which is exactly where value-conflicts ("X is 64GB" vs "X is 32GB") live.
+- **`nli` (recommended with the NLI layer installed)**: floor-only cosine gate, then the line-level NLI finder scores each pair and only pairs at P(contradiction) >= `MNEMOS_NLI_FINDER_THRESHOLD` (default 0.8, recall-first) reach the LLM judge. The judge keeps precision; the finder stops it drowning in same-topic-compatible pairs.
+
+The LLM outputs one of four labels:
 
 - `COMPATIBLE`, same topic, different aspects; no change
 - `SUPERSEDED`, newer memory updates the same fact with a new value; older gets a `valid_until` timestamp set to the newer memory's `created_at`, and a `memory_links` row is written with `relation_type='supersedes'` and `consolidation_type='supersession'`

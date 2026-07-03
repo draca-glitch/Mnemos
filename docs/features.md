@@ -74,7 +74,7 @@ Per-phase model routing, env vars, and recommended models in [usage.md](usage.md
 
 ## Contradiction detection (real-time, on store)
 
-Every `memory_store()` call checks the new memory against existing facts on the same topic via vector similarity + same-project filter + cross-encoder rerank (no LLM in the loop). Conflicts surface in the response immediately and persist as `memory_links` with `relation_type='contradicts'` for the next Nyx cycle's Phase 4 batch pass to consider. Full mechanism in [`ARCHITECTURE.md#real-time-contradiction-detection-on-store`](ARCHITECTURE.md#real-time-contradiction-detection-on-store).
+Every `memory_store()` call checks the new memory against existing facts on the same topic: vector similarity gate + same-project filter, then a classification tier (no LLM in the loop). With the optional NLI layer enabled (`MNEMOS_CONTRADICT_MODE=nli`, v10.15+) the tier asks the contradiction question directly via a natural-language-inference model, max-direction P(contradiction) at a high-precision threshold; benched at AUC 0.94 vs 0.69 for the legacy cross-encoder tier, which scores topicality and cannot distinguish agreement from conflict. Conflicts surface in the response immediately and persist as `memory_links` with `relation_type='contradicts'` for the next Nyx cycle's Phase 4 batch pass to consider. Full mechanism in [`ARCHITECTURE.md#real-time-contradiction-detection-on-store`](ARCHITECTURE.md#real-time-contradiction-detection-on-store).
 
 ## Auto-widen
 
@@ -82,7 +82,7 @@ If a project-filtered search returns fewer than 3 results, Mnemos re-runs the sa
 
 ## 3-way deduplication
 
-Before storing, Mnemos pools candidates from three independent signals (FTS5 keyword overlap, CML-subject match, vector similarity) and runs them through the Jina cross-encoder for a final confidence score. Three signals catch different failure modes; any one of them missing a duplicate is fine. Details in [`ARCHITECTURE.md#3-way-deduplication-on-store`](ARCHITECTURE.md#3-way-deduplication-on-store).
+Before storing, Mnemos pools candidates from three independent signals (FTS5 keyword overlap, CML-subject match, vector similarity) and confirms the best candidate. With the optional NLI layer (`MNEMOS_DEDUP_CONFIRM=nli`, v10.15+) confirmation is bidirectional entailment, each side must entail the other, so structurally-similar-but-distinct facts stop being false-blocked (benched: 1 false positive vs 16-21 for distance-based confirmation; a subset-fact correctly does not block against a larger record). Without it, the legacy Jina cross-encoder confidence score applies. Three signals catch different failure modes; any one of them missing a duplicate is fine. Details in [`ARCHITECTURE.md#3-way-deduplication-on-store`](ARCHITECTURE.md#3-way-deduplication-on-store).
 
 ## Forgetting: nothing gets deleted automatically
 
