@@ -62,13 +62,17 @@ class TestBackendSelection:
         assert isinstance(scorer, _Recorder)
 
     def test_is_available_true_with_onnx_models_and_no_torch(self, monkeypatch):
+        # stub the import probe too: CI has neither torch nor transformers,
+        # and this test is about the model-presence logic, not the env
         monkeypatch.setattr(nli, "_torch_available", lambda: False)
+        monkeypatch.setattr(nli, "_onnx_runtime_available", lambda: True)
         monkeypatch.setattr(nli, "_onnx_model_dir",
                             lambda multilingual=False: "/somewhere")
         assert nli.is_available() is True
 
     def test_is_available_false_with_neither_backend(self, monkeypatch):
         monkeypatch.setattr(nli, "_torch_available", lambda: False)
+        monkeypatch.setattr(nli, "_onnx_runtime_available", lambda: True)
         monkeypatch.setattr(nli, "_onnx_model_dir",
                             lambda multilingual=False: None)
         assert nli.is_available() is False

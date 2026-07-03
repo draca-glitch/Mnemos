@@ -4,6 +4,11 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.16.2] - 2026-07-03 (CI test isolation)
+
+### Fixed
+- `test_is_available_true_with_onnx_models_and_no_torch` depended on transformers being installed in the test environment (true locally, false in CI); the ONNX runtime import probe now has its own seam (`_onnx_runtime_available`) and the test stubs it. No behavior change.
+
 ## [10.16.1] - 2026-07-03 (documentation)
 
 ### Changed

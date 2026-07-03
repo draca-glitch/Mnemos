@@ -61,11 +61,17 @@ def _onnx_model_dir(multilingual=False):
     return d if os.path.exists(os.path.join(d, "model.onnx")) else None
 
 
-def _onnx_available() -> bool:
+def _onnx_runtime_available() -> bool:
     try:
         import onnxruntime  # noqa: F401
         import transformers  # noqa: F401
+        return True
     except Exception:
+        return False
+
+
+def _onnx_available() -> bool:
+    if not _onnx_runtime_available():
         return False
     return (_onnx_model_dir(multilingual=False) is not None
             or _onnx_model_dir(multilingual=True) is not None)
