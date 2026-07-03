@@ -1135,6 +1135,23 @@ class Mnemos:
             self.store.update_memory(mid, {"importance": new_importance})
             memory.importance = new_importance
 
+        # Useful-loop (v10.17.0): drilling into a memory shortly after a
+        # search surfaced it is the zero-friction usefulness signal. Marks
+        # only rows the retrieval logger wrote, so it is inert when
+        # retrieval logging is off.
+        if self.enable_retrieval_log:
+            try:
+                conn = self.store._get_conn()
+                conn.execute(
+                    "UPDATE retrieval_log SET useful = 1 "
+                    "WHERE memory_id = ? AND useful IS NULL "
+                    "AND retrieved_at >= datetime('now', 'localtime', '-24 hours')",
+                    (mid,),
+                )
+                conn.commit()
+            except Exception:
+                pass
+
         return memory.to_dict()
 
     def update(self, mid: int, **fields) -> dict:

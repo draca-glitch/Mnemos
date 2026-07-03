@@ -220,6 +220,22 @@ def bidirectional_entailment(a, b):
     return min(e1, e2)
 
 
+def p_entailment(premise, hypothesis):
+    """One-direction P(entailment): does the premise text state the
+    hypothesis? Used by the phase-3 novelty gate (an insight entailed by
+    either source alone is a restatement). None when no backend is usable.
+    """
+    if not is_available():
+        return None
+    try:
+        multilingual = not (is_english(premise) and is_english(hypothesis))
+        scorer = _get_scorer(multilingual=multilingual)
+        e, _ = scorer.score(premise, hypothesis)
+    except Exception:
+        return None
+    return e
+
+
 def _lines(text):
     return [ln.strip() for ln in text.split("\n")
             if ln.strip() and ln.strip() != "---"]
@@ -259,6 +275,47 @@ def line_max_contradiction(a, b, top_k=8):
             _, c1 = scorer.score(la, lb)
             _, c2 = scorer.score(lb, la)
             best = max(best, c1, c2)
+    except Exception:
+        return None
+    return best
+
+
+def line_max_duplicate(a, b, top_k=8):
+    """Line-level shared-fact finder: max min-direction P(entail) over the
+    top_k cosine-preselected line pairs of two records.
+
+    Two records share a fact when some line in one and some line in the
+    other bidirectionally entail each other. This is the phase-2 cluster
+    admission signal (weave-bench gate replay: both 2026-07-03 production
+    noise clusters scored below 0.57 on every member pair and dissolve at
+    the 0.70 gate). None when the runtime is unavailable or either record
+    has no lines.
+    """
+    if not is_available():
+        return None
+    lines_a, lines_b = _lines(a), _lines(b)
+    if not lines_a or not lines_b:
+        return None
+    vecs = embed(lines_a + lines_b, prefix="passage")
+    if not vecs or len(vecs) != len(lines_a) + len(lines_b):
+        pairs = [(la, lb) for la in lines_a for lb in lines_b][:top_k]
+    else:
+        va, vb = vecs[:len(lines_a)], vecs[len(lines_a):]
+        scored = []
+        for i, la in enumerate(lines_a):
+            for j, lb in enumerate(lines_b):
+                cos = sum(x * y for x, y in zip(va[i], vb[j]))
+                scored.append((cos, la, lb))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        pairs = [(la, lb) for _, la, lb in scored[:top_k]]
+    best = 0.0
+    try:
+        for la, lb in pairs:
+            multilingual = not (is_english(la) and is_english(lb))
+            scorer = _get_scorer(multilingual=multilingual)
+            e1, _ = scorer.score(la, lb)
+            e2, _ = scorer.score(lb, la)
+            best = max(best, min(e1, e2))
     except Exception:
         return None
     return best

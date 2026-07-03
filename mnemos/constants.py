@@ -120,6 +120,39 @@ NLI_FINDER_MAX_PAIRS = int(os.environ.get("MNEMOS_NLI_FINDER_MAX_PAIRS", "200"))
 CONTRADICT_MIN_SIM = float(os.environ.get("MNEMOS_CONTRADICT_MIN_SIM", "0.60"))
 CONTRADICT_MAX_SIM = float(os.environ.get("MNEMOS_CONTRADICT_MAX_SIM", "0.85"))
 
+# --- Zero-LLM daily cycle (v10.17.0). Evidence: benchmarks/weave-bench
+# (phase-2 NLI gate validated on production clusters) and
+# benchmarks/merge-bench (mechanical merge 24/25 exact recovery; the one
+# semantic false-duplicate at 0.851 sets the 0.90 tau; short enumerated
+# list lines are the other failure class, hence the exact-only floor). ---
+# Phase 2 merge engine: 'mechanical' (line-union NLI dedup, selection only,
+# provable preservation) or 'llm' (10.16 generative path). Read at call
+# time (mirror DEDUP_CONFIRM_DEFAULT) so tests and long-lived processes
+# can flip via env.
+MERGE_ENGINE_DEFAULT = "mechanical"
+MECH_MERGE_TAU = float(os.environ.get("MNEMOS_MECH_MERGE_TAU", "0.90"))
+MECH_MERGE_MIN_LINE_CHARS = int(os.environ.get(
+    "MNEMOS_MECH_MERGE_MIN_LINE_CHARS", "25"))
+# Phase 2 cluster admission gate: members must share at least one
+# line-level bidirectional-entailment fact or they are ejected before any
+# merge. 'nli' or 'off' (legacy pass-through), read at call time.
+CLUSTER_GATE_DEFAULT = "nli"
+CLUSTER_GATE_TAU = float(os.environ.get("MNEMOS_CLUSTER_GATE_TAU", "0.70"))
+CLUSTER_GATE_MAX_LINES = int(os.environ.get(
+    "MNEMOS_CLUSTER_GATE_MAX_LINES", "8"))
+# Phase 2 candidacy: 'mutual-topk' (rank-based, immune to the compressed
+# e5 cosine space where 45% of all pairs clear 0.78) or 'threshold'
+# (legacy absolute cutoffs). Read at call time.
+CANDIDACY_DEFAULT = "mutual-topk"
+CANDIDACY_TOP_K = int(os.environ.get("MNEMOS_CANDIDACY_TOP_K", "3"))
+# Phase 3 insight novelty gate: a bridge insight entailed by either source
+# alone is a restatement; the link is kept, the insight memory is not.
+WEAVE_NOVELTY_TAU = float(os.environ.get("MNEMOS_WEAVE_NOVELTY_TAU", "0.85"))
+# Phase 4 judge: 'llm' (judge immediately), 'queue' (record
+# contradiction-candidate links for a later LLM-tier run), 'auto'
+# (llm when an LLM is configured, queue otherwise). Read at call time.
+CONTRADICT_JUDGE_DEFAULT = "auto"
+
 # --- Nyx cycle tunables (v10.15.1: centralized from consolidation/phases.py;
 # this file is the single settings surface for every tunable in the package) ---
 # Phase 2 clustering

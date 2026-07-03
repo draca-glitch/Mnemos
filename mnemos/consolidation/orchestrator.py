@@ -314,25 +314,42 @@ def run_nyx_cycle(
         phases = {1, 2, 3, 4, 6}  # default: consolidation, no synthesis
 
     import os as _os
+    from ..constants import MERGE_ENGINE_DEFAULT, CONTRADICT_JUDGE_DEFAULT
     disable_llm = _os.environ.get("MNEMOS_DISABLE_LLM") == "1"
     has_llm = llm_is_configured() and not disable_llm
-    llm_phases = {2, 3, 4, 5}  # phases that need an LLM
+
+    # v10.17.0: which phases need an LLM depends on the configured engines.
+    # Weave and synthesize always generate text. Phase 2 needs one only in
+    # the legacy llm merge engine (mechanical is selection, not generation).
+    # Phase 4 needs one only when the judge resolves to llm; queue mode
+    # records contradiction-candidate links for a later LLM-tier run.
+    merge_engine = _os.environ.get(
+        "MNEMOS_MERGE_ENGINE", MERGE_ENGINE_DEFAULT).lower()
+    judge_mode = _os.environ.get(
+        "MNEMOS_CONTRADICT_JUDGE", CONTRADICT_JUDGE_DEFAULT).lower()
+    if judge_mode == "auto":
+        judge_mode = "llm" if has_llm else "queue"
+    llm_phases = {3, 5}
+    if merge_engine == "llm":
+        llm_phases.add(2)
+    if judge_mode == "llm":
+        llm_phases.add(4)
+    log(f"Engines: merge={merge_engine} contradict-judge={judge_mode} "
+        f"(LLM-requiring phases requested: {sorted(phases & llm_phases) or 'none'})")
 
     if not has_llm and (phases & llm_phases):
-        # v10.4.0: loud-fail by default. Silent degradation is dangerous
-        # (users assume Nyx ran). MNEMOS_DISABLE_LLM=1 explicitly opts into
-        # SQL-only operation for deployments that intentionally do not
-        # configure an LLM.
+        # v10.17.0: the core cycle no longer needs an LLM, so a missing key
+        # skips only the enrichment-tier phases instead of failing the run
+        # (v10.4.0 loud-fail predates the zero-LLM daily cycle). The WARNING
+        # line is grep-able by ops wrappers that expect the LLM tier to run.
+        skipped = sorted(phases & llm_phases)
+        phases = phases - llm_phases
         if disable_llm:
-            phases = phases - llm_phases
+            log(f"MNEMOS_DISABLE_LLM=1: skipping LLM-tier phases {skipped}")
         else:
-            raise RuntimeError(
-                "No LLM configured (MNEMOS_LLM_API_KEY required, and "
-                "MNEMOS_LLM_MODEL required for non-OpenAI endpoints). "
-                f"Nyx cycle would skip phases {sorted(phases & llm_phases)}. "
-                "Set the env vars, or pass MNEMOS_DISABLE_LLM=1 to run "
-                "SQL-only phases (Phase 6 bookkeeping) intentionally."
-            )
+            log(f"WARNING: no LLM configured; skipping LLM-tier phases "
+                f"{skipped}. The core cycle continues; set "
+                "MNEMOS_LLM_API_KEY to enable the enrichment tier.")
 
     mode = "EXECUTE" if execute else "DRY RUN"
     log(f"Mnemos Nyx Cycle starting ({mode}, phases={sorted(phases)})")
@@ -361,8 +378,8 @@ def run_nyx_cycle(
         is_surge = is_surge or surge_detected
         phase_stats["phase1"] = {"new_memories": len(new_ids), "surge": is_surge}
 
-    # --- LLM-dependent phases ---
-    if phases & llm_phases:
+    # --- Embedding-dependent phases (2-5; LLM only where the engine needs it) ---
+    if phases & {2, 3, 4, 5}:
         from .phases import (
             load_embeddings, phase_dedup,
             phase_weave, phase_contradict, phase_synthesize,
@@ -375,7 +392,7 @@ def run_nyx_cycle(
         )
 
         if len(all_embeddings) < 2:
-            log(f"Only {len(all_embeddings)} embeddings, need >=2 for clustering. Skipping LLM phases.")
+            log(f"Only {len(all_embeddings)} embeddings, need >=2 for clustering. Skipping phases 2-5.")
         else:
 
             # Phase 0.5: Cemelify (v10.4.0). Rewrites prose-form active
@@ -384,7 +401,8 @@ def run_nyx_cycle(
             # Opt-out: MNEMOS_NYX_CEMELIFY=0 skips it. Rewriting already-stored
             # memories every cycle can drift facts on weaker local models, and the
             # non-CML population is often document-shaped content best left intact.
-            if os.environ.get("MNEMOS_NYX_CEMELIFY", "1") != "0":
+            # LLM-tier work: silently absent on keyless runs.
+            if os.environ.get("MNEMOS_NYX_CEMELIFY", "1") != "0" and has_llm:
                 phase_stats["phase0_5"] = _phase_cemelify(
                     conn, store, mem_by_id, execute=execute
                 )
@@ -410,7 +428,8 @@ def run_nyx_cycle(
 
             if 4 in phases:
                 phase_stats["phase4"] = phase_contradict(
-                    conn, mergeable_embeddings, mem_by_id, is_surge, execute=execute
+                    conn, mergeable_embeddings, mem_by_id, is_surge,
+                    execute=execute, judge=judge_mode
                 )
                 if execute:
                     p4 = phase_stats["phase4"]

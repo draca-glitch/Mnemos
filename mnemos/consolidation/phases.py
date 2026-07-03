@@ -45,7 +45,11 @@ from ..constants import (
     NYX_CONTRADICT_FINDER_DEFAULT, NLI_FINDER_THRESHOLD, NLI_FINDER_MAX_PAIRS,
     TIGHT_THRESHOLD, TOPIC_THRESHOLD, WEAVE_MIN_SIMILARITY, WEAVE_TOP_K,
     NYX_PACKET_SIZE, NORMAL_MAX_CALLS, SURGE_MAX_CALLS, SURGE_THRESHOLD,
+    MERGE_ENGINE_DEFAULT, CLUSTER_GATE_DEFAULT, CLUSTER_GATE_TAU,
+    CLUSTER_GATE_MAX_LINES, CANDIDACY_DEFAULT, CANDIDACY_TOP_K,
+    WEAVE_NOVELTY_TAU,
 )
+from .mechanical import mechanical_merge_cluster
 from .. import nli
 
 
@@ -212,21 +216,95 @@ def cosine_similarity_matrix(embeddings):
     return ids, sim_matrix
 
 
+def mutual_topk_adjacency(sim_matrix, k):
+    """Rank-based pair candidacy: adj[i][j] iff j is in i's top-k nearest
+    neighbors AND i is in j's. Immune to the compressed e5 cosine space,
+    where absolute thresholds are noise (measured 2026-07-03: 45% of all
+    active-pair similarities cleared 0.78).
+    """
+    n = len(sim_matrix)
+    topk = []
+    for i in range(n):
+        order = sorted((j for j in range(n) if j != i),
+                       key=lambda j: sim_matrix[i][j], reverse=True)
+        topk.append(set(order[:k]))
+    adj = [[False] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if j in topk[i] and i in topk[j]:
+                adj[i][j] = adj[j][i] = True
+    return adj
+
+
+def nli_cluster_gate(cluster, mem_by_id, tau=None):
+    """Phase-2 admission gate: a member stays only when it shares at least
+    one line-level bidirectional-entailment fact with another member.
+
+    Validated on the 2026-07-03 production clusters (weave-bench
+    gate_replay): both cosine-built noise clusters dissolve entirely, so
+    merges only fire on genuine restatements. Returns the admitted ids;
+    fewer than 2 means the cluster dissolves. Gate off or NLI unavailable
+    passes the cluster through unchanged (loud log).
+    """
+    if tau is None:
+        tau = CLUSTER_GATE_TAU
+    gate_mode = os.environ.get(
+        "MNEMOS_CLUSTER_GATE", CLUSTER_GATE_DEFAULT).lower()
+    if gate_mode == "off":
+        return list(cluster)
+    if not nli.is_available():
+        log("  Cluster gate: NLI unavailable, passing cluster ungated")
+        return list(cluster)
+
+    def head(mid):
+        content = mem_by_id.get(mid, {}).get("content", "") or ""
+        lines = [ln.strip() for ln in explode_cml_chain(content).split("\n")
+                 if ln.strip() and not ln.strip().startswith("---")]
+        return "\n".join(lines[:CLUSTER_GATE_MAX_LINES])
+
+    texts = {mid: head(mid) for mid in cluster}
+    shares = {mid: False for mid in cluster}
+    members = list(cluster)
+    for i, a in enumerate(members):
+        for b in members[i + 1:]:
+            if shares[a] and shares[b]:
+                continue
+            score = nli.line_max_duplicate(texts[a], texts[b])
+            if score is not None and score >= tau:
+                shares[a] = shares[b] = True
+    return [mid for mid in members if shares[mid]]
+
+
 def find_clusters(ids, sim_matrix, threshold, mem_by_id, max_clusters=50,
-                  enforce_project_boundary=True):
+                  enforce_project_boundary=True, candidacy=None, top_k=None):
     """Complete-linkage agglomerative clustering.
 
-    Returns list of [memory_id, ...] clusters.
+    candidacy 'mutual-topk' (default) builds pair candidacy from mutual
+    top-k neighbor rank instead of the absolute threshold; a 0.5 cosine
+    floor only guards degenerate cases. candidacy 'threshold' is the
+    legacy absolute-cutoff behavior. Returns list of [memory_id, ...]
+    clusters.
     """
     n = len(ids)
     if n < 2:
         return []
+
+    if candidacy is None:
+        candidacy = os.environ.get(
+            "MNEMOS_CANDIDACY", CANDIDACY_DEFAULT).lower()
+    mutual = None
+    if candidacy == "mutual-topk":
+        mutual = mutual_topk_adjacency(
+            sim_matrix, top_k if top_k is not None else CANDIDACY_TOP_K)
+        threshold = 0.5  # sanity floor only; rank decides candidacy
 
     # Build adjacency
     adj = [[False] * n for _ in range(n)]
     for i in range(n):
         for j in range(i + 1, n):
             if sim_matrix[i][j] >= threshold:
+                if mutual is not None and not mutual[i][j]:
+                    continue
                 if enforce_project_boundary and mem_by_id:
                     pi = mem_by_id.get(ids[i], {}).get("project")
                     pj = mem_by_id.get(ids[j], {}).get("project")
@@ -538,18 +616,23 @@ def load_memory_meta(conn, project=None):
 # =============================================================================
 
 def phase_dedup(conn, mergeable_embeddings, mem_by_id, is_surge, execute=False):
-    """Two-tier dedup: tight (0.88) + topic (0.75). Returns stats dict."""
+    """Phase 2 dedup. Mechanical engine (v10.17.0 default): mutual-topk
+    candidacy, NLI admission gate, line-union merge, no LLM. Legacy llm
+    engine keeps the 10.16 two-tier generative path unchanged.
+    """
     stats = {"tight_found": 0, "tight_merged": 0, "topic_found": 0,
-             "topic_merged": 0, "archived": 0, "created": 0}
+             "topic_merged": 0, "archived": 0, "created": 0,
+             "gate_dissolved": 0, "gate_ejected": 0}
 
     if len(mergeable_embeddings) < 2:
         log("Phase 2: Not enough mergeable memories")
         return stats
 
+    engine = os.environ.get("MNEMOS_MERGE_ENGINE", MERGE_ENGINE_DEFAULT).lower()
     max_clusters = SURGE_MAX_CALLS if is_surge else NORMAL_MAX_CALLS
 
     # Tier 1A: Tight dedup
-    log(f"Phase 2A: Tight dedup (threshold={TIGHT_THRESHOLD})...")
+    log(f"Phase 2A: Tight dedup (engine={engine})...")
     ids, sim_matrix = cosine_similarity_matrix(mergeable_embeddings)
     tight_clusters = find_clusters(ids, sim_matrix, TIGHT_THRESHOLD,
                                    mem_by_id, max_clusters=max_clusters)
@@ -559,24 +642,50 @@ def phase_dedup(conn, mergeable_embeddings, mem_by_id, is_surge, execute=False):
         log(f"  Found {len(tight_clusters)} tight clusters")
         for i, cluster in enumerate(tight_clusters):
             _log_cluster(cluster, mem_by_id, i + 1)
+
+            admitted = nli_cluster_gate(cluster, mem_by_id)
+            ejected = [mid for mid in cluster if mid not in admitted]
+            if ejected:
+                stats["gate_ejected"] += len(ejected)
+                log(f"  Gate ejected {ejected} (no shared fact at "
+                    f">= {CLUSTER_GATE_TAU})")
+            if len(admitted) < 2:
+                stats["gate_dissolved"] += 1
+                log("  Cluster dissolved by gate, no merge")
+                continue
+
             if execute:
-                merged = merge_cluster(cluster, mem_by_id)
+                if engine == "mechanical":
+                    merged = mechanical_merge_cluster(admitted, mem_by_id)
+                    if merged is None:
+                        log("  Mechanical merge unavailable (NLI backend "
+                            "missing?), cluster skipped")
+                        stats["merge_aborted"] = stats.get("merge_aborted", 0) + 1
+                        continue
+                else:
+                    merged = merge_cluster(admitted, mem_by_id)
                 if merged:
-                    new_id = apply_merge(conn, cluster, merged, mem_by_id)
+                    new_id = apply_merge(conn, admitted, merged, mem_by_id)
                     if new_id is not None:
-                        log(f"  Merged → #{new_id}, archived {cluster}")
+                        log(f"  Merged → #{new_id}, archived {admitted}")
                         stats["tight_merged"] += 1
-                        stats["archived"] += len(cluster)
+                        stats["archived"] += len(admitted)
                         stats["created"] += 1
                         # Remove merged IDs from embeddings for tier 1B
-                        for mid in cluster:
+                        for mid in admitted:
                             mergeable_embeddings.pop(mid, None)
                     else:
                         stats["merge_aborted"] = stats.get("merge_aborted", 0) + 1
-                time.sleep(0.5)
+                if engine != "mechanical":
+                    time.sleep(0.5)
 
-    # Tier 1B: Topic merge (looser threshold)
-    if len(mergeable_embeddings) >= 2:
+    # Tier 1B: Topic merge (looser threshold). Generative aggregation of
+    # same-topic distinct facts: LLM-tier work by definition (the gate
+    # rejects non-restatement clusters), so the mechanical engine retires it.
+    if engine == "mechanical":
+        log("Phase 2B: topic tier retired under the mechanical engine "
+            "(aggregation is LLM-tier work)")
+    elif len(mergeable_embeddings) >= 2:
         log(f"Phase 2B: Topic merge (threshold={TOPIC_THRESHOLD})...")
         ids, sim_matrix = cosine_similarity_matrix(mergeable_embeddings)
         remaining = max(0, max_clusters - stats["tight_merged"])
@@ -633,16 +742,19 @@ def store_bridge_insight(conn, mid_a, mid_b, insight):
         content = f"Bridge between memory #{mid_a} and #{mid_b}: {insight}"
     else:
         content = f"L: Bridge #{mid_a}↔#{mid_b}: {insight}"
+    # Episodic layer (v10.17.0): bridges are derivative content and earn
+    # permanence through retrieval; unretrieved ones decay at the episodic
+    # half-life instead of squatting in the semantic tier forever.
     conn.execute(
         "INSERT INTO memories (namespace, project, content, tags, importance, "
         "type, layer, consolidation_lock) "
-        "VALUES (?, 'personal', ?, ?, 5, 'learning', 'semantic', 1)",
+        "VALUES (?, 'personal', ?, ?, 5, 'learning', 'episodic', 1)",
         (_active_namespace(), content, tag_str),
     )
     cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     try:
         text = prep_memory_text("personal", content, tag_str,
-                                mem_type="learning", layer="semantic")
+                                mem_type="learning", layer="episodic")
         emb = fastembed_embed([text])
         if emb and emb[0]:
             store_embeddings(conn, [("memory", cid, text_hash(text), emb[0])],
@@ -670,6 +782,24 @@ def phase_weave(conn, all_embeddings, mem_by_id, is_surge, execute=False):
         if not _is_nyx_generated(mem_by_id.get(mid, {}))
     }
     log(f"  {len(original_ids)} original memories (skipping {len(all_embeddings) - len(original_ids)} nyx-generated)")
+
+    # Staleness guard (v10.17.0): a memory with an outgoing superseded_by or
+    # evolves link is an outdated statement of its subject; weaving from it
+    # bakes stale state into fresh insights (observed 2026-07-03: bridges
+    # citing a retired LLM routing decision). The link graph already knows.
+    try:
+        stale = {
+            row[0] for row in conn.execute(
+                "SELECT DISTINCT source_id FROM memory_links "
+                "WHERE relation_type IN ('superseded_by', 'evolves')"
+            )
+        }
+    except Exception:
+        stale = set()
+    stale_here = original_ids & stale
+    if stale_here:
+        original_ids -= stale_here
+        log(f"  Staleness guard: excluded {len(stale_here)} superseded/evolved sources")
 
     ids = sorted(original_ids)
     id_to_idx = {mid: i for i, mid in enumerate(ids)}
@@ -784,11 +914,29 @@ def phase_weave(conn, all_embeddings, mem_by_id, is_surge, execute=False):
             except Exception as e:
                 log(f"    → Link failed: {e}")
 
-            # Store bridge insight as a new memory
+            # Store bridge insight as a new memory, unless it is a
+            # restatement. Novelty gate (v10.17.0): an insight entailed by
+            # either source alone adds no information; keep the link, skip
+            # the memory. In-distribution NLI use (literal entailment), not
+            # the refuted relation classification (benchmarks/weave-bench).
             if insight:
-                store_bridge_insight(conn, mid_a, mid_b, insight)
-                stats["insights_stored"] += 1
-                log(f"    → Insight stored: {insight[:80]}")
+                redundant = False
+                if nli.is_available():
+                    for src in (mem_a, mem_b):
+                        e = nli.p_entailment(
+                            (src.get("content", "") or "")[:700], insight)
+                        if e is not None and e >= WEAVE_NOVELTY_TAU:
+                            redundant = True
+                            break
+                if redundant:
+                    stats["insights_skipped_redundant"] = (
+                        stats.get("insights_skipped_redundant", 0) + 1)
+                    log(f"    → Insight redundant (entailed by a source), "
+                        "link kept, memory skipped")
+                else:
+                    store_bridge_insight(conn, mid_a, mid_b, insight)
+                    stats["insights_stored"] += 1
+                    log(f"    → Insight stored: {insight[:80]}")
 
         time.sleep(0.5)
 
@@ -855,10 +1003,18 @@ def select_contradict_candidates(ids, sim_matrix, mem_by_id, mode="cosine",
     return pairs
 
 
-def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge, execute=False):
-    """Detect decisions that evolved, reversed, or conflict. Returns stats dict."""
+def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge,
+                     execute=False, judge="llm"):
+    """Detect decisions that evolved, reversed, or conflict.
+
+    judge='llm' classifies candidates immediately (10.16 behavior) and
+    first consumes any contradiction-candidate links queued by earlier
+    keyless runs. judge='queue' (zero-LLM tier) records flagged pairs as
+    contradiction-candidate links and stops; a later llm-judged run picks
+    them up. Returns stats dict.
+    """
     stats = {"candidates": 0, "superseded": 0, "evolved": 0,
-             "contradicts": 0, "compatible": 0}
+             "contradicts": 0, "compatible": 0, "queued": 0}
 
     if len(mergeable_embeddings) < 2:
         log("Phase 4: Not enough memories for contradiction scan")
@@ -909,6 +1065,59 @@ def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge, execute=Fa
             "using cosine candidates unscored")
 
     candidates = candidates[:max_eval]
+
+    if judge == "queue":
+        # Zero-LLM tier: record flagged pairs as contradiction-candidate
+        # links (idempotent) for a later llm-judged run. No archiving, no
+        # valid_until edits; queue entries are inert until judged.
+        stats["candidates"] = len(candidates)
+        for mid_a, mid_b, cos in candidates:
+            log(f"  Queued candidate #{mid_a} x #{mid_b} (sim={cos:.3f})")
+            if execute:
+                conn.execute(
+                    "INSERT OR IGNORE INTO memory_links "
+                    "(source_id, target_id, relation_type, strength) "
+                    "VALUES (?, ?, 'contradiction-candidate', ?)",
+                    (mid_a, mid_b, round(min(cos, 0.99), 3)),
+                )
+                stats["queued"] += 1
+        if execute:
+            conn.commit()
+        log(f"Phase 4 done (queue mode): {stats['queued']} candidates queued "
+            "for the LLM tier")
+        return stats
+
+    # judge == 'llm': consume any queued candidates from earlier keyless
+    # runs first, then fresh candidates. Queued links are deleted after
+    # judging (replaced by the verdict link) or when a member is gone.
+    queued_pairs = []
+    try:
+        rows = conn.execute(
+            "SELECT source_id, target_id FROM memory_links "
+            "WHERE relation_type = 'contradiction-candidate'"
+        ).fetchall()
+        for s, t in rows:
+            if execute:
+                conn.execute(
+                    "DELETE FROM memory_links WHERE relation_type = "
+                    "'contradiction-candidate' AND source_id = ? AND target_id = ?",
+                    (s, t),
+                )
+            if s in mem_by_id and t in mem_by_id:
+                queued_pairs.append((s, t, 1.0))
+        if execute and rows:
+            conn.commit()
+        if queued_pairs:
+            log(f"  Consuming {len(queued_pairs)} queued candidates from "
+                "earlier zero-LLM runs")
+    except Exception as e:
+        log(f"  Queue read failed ({e}); continuing with fresh candidates")
+
+    seen_pairs = {tuple(sorted((a, b))) for a, b, _ in queued_pairs}
+    candidates = queued_pairs + [
+        (a, b, c) for a, b, c in candidates
+        if tuple(sorted((a, b))) not in seen_pairs
+    ]
     stats["candidates"] = len(candidates)
 
     log(f"  {len(candidates)} candidate contradiction pairs")

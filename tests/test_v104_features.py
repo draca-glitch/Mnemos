@@ -98,15 +98,18 @@ class TestLoudFailAndDisable:
         assert "phase6" in stats
         assert "phase2" not in stats
 
-    def test_loud_fail_without_disable(self, m, monkeypatch):
-        """Without MNEMOS_DISABLE_LLM, an unconfigured LLM must raise
-        RuntimeError rather than silently skipping phases."""
+    def test_keyless_run_skips_llm_tier_without_raising(self, m, monkeypatch):
+        """v10.17.0 replaces the v10.4.0 loud-fail: the core cycle no longer
+        needs an LLM, so a missing key skips only the LLM-tier phases
+        (weave/synthesize) with a WARNING log instead of raising. The
+        zero-LLM phases keep running."""
         monkeypatch.delenv("MNEMOS_LLM_API_KEY", raising=False)
         monkeypatch.delenv("MNEMOS_LLM_MODEL", raising=False)
         monkeypatch.delenv("MNEMOS_DISABLE_LLM", raising=False)
         m.store_memory(skip_dedup=True, project="p", content="F: seed memory")
-        with pytest.raises(RuntimeError, match="No LLM configured"):
-            m.consolidate(execute=True, phases={1, 2, 3, 6})
+        stats = m.consolidate(execute=True, phases={1, 2, 3, 6})
+        assert "phase6" in stats
+        assert "phase3" not in stats
 
 
 # --- OpenAI default model preset (v10.4.0) ---

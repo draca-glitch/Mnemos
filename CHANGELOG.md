@@ -4,6 +4,70 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.17.0] - 2026-07-03 (zero-LLM daily consolidation cycle)
+
+The daily Nyx cycle now runs with zero LLM calls: cosine nominates (by
+rank), NLI decides (admission gate + line-level dedup), a mechanical union
+executes merges (selection, never generation). LLM-requiring work (weave,
+synthesize, contradiction judging, cemelify) is the optional enrichment
+tier. Evidence: `benchmarks/weave-bench` (NLI weave classification refuted
+at 3% agreement; the phase-2 gate validated on production noise clusters)
+and `benchmarks/merge-bench` (mechanical merge: 24/25 exact recovery on
+ground truth, 100% line coverage and digit integrity by construction).
+
+### Added
+- Mechanical merge engine (`mnemos/consolidation/mechanical.py`), the
+  phase-2 default (`MNEMOS_MERGE_ENGINE=mechanical|llm`). Line union with
+  bidirectional-entailment dedup at `MNEMOS_MECH_MERGE_TAU` (0.90; the one
+  observed semantic false-duplicate scored 0.851, true duplicates ~1.0).
+  Lines under `MNEMOS_MECH_MERGE_MIN_LINE_CHARS` (25) dedup by exact match
+  only (short enumerated list lines are an NLI failure class). Newer
+  phrasing wins; every output line is an input line verbatim, so fact
+  preservation is provable rather than auditable.
+- Phase-2 NLI admission gate (`MNEMOS_CLUSTER_GATE=nli|off`, tau
+  `MNEMOS_CLUSTER_GATE_TAU` 0.70): cluster members must share at least one
+  line-level bidirectional-entailment fact or they are ejected; clusters
+  without shared facts dissolve unmerged. Replayed on the 2026-07-03
+  production run: both cosine noise clusters dissolve entirely.
+- Mutual top-k candidacy (`MNEMOS_CANDIDACY=mutual-topk|threshold`, k via
+  `MNEMOS_CANDIDACY_TOP_K`): phase-2 pair candidacy from mutual
+  nearest-neighbor rank instead of absolute cosine thresholds, which are
+  noise in the compressed e5 space (measured: 45% of all active-pair
+  similarities above 0.78).
+- Phase-4 judge queue mode (`MNEMOS_CONTRADICT_JUDGE=llm|queue|auto`):
+  keyless runs record NLI-flagged pairs as `contradiction-candidate`
+  links; the next llm-judged run consumes the queue. `auto` resolves by
+  key presence.
+- Weave staleness guard: memories with outgoing `superseded_by`/`evolves`
+  links are excluded as weave sources (stale state was being woven into
+  fresh insights).
+- Weave novelty gate (`MNEMOS_WEAVE_NOVELTY_TAU`, 0.85): a bridge insight
+  entailed by either source alone is a restatement; the link is kept, the
+  insight memory is not stored.
+- Useful-loop: `get()` on a memory that retrieval logging recorded in the
+  last 24h marks those `retrieval_log` rows `useful=1`. Zero-friction
+  usefulness signal for measuring consolidation value.
+- `nli.line_max_duplicate` and `nli.p_entailment` public scorers.
+
+### Changed
+- Bridge insights are stored on the episodic layer: derivative content
+  earns permanence through retrieval instead of squatting in the semantic
+  tier.
+- Phase 2B topic merge is retired under the mechanical engine
+  (aggregating distinct same-topic facts is generative LLM-tier work);
+  the legacy llm engine keeps both tiers.
+- A missing LLM key no longer fails the cycle (replaces the v10.4.0
+  loud-fail): LLM-tier phases are skipped with a grep-able WARNING and
+  the zero-LLM phases run. `MNEMOS_DISABLE_LLM=1` still opts into the
+  same skip silently. Phase 0.5 cemelify additionally requires a key.
+
+### Fixed
+- `tests/test_v107_tier2.py` fixture wrote to the developer's default DB
+  whenever another test module imported mnemos first (DEFAULT_DB_PATH is
+  frozen at import time); 419 fixture memories had accumulated and the
+  tier-2 recall assert started flaking on KNN ties. The store is now
+  constructed explicitly.
+
 ## [10.16.2] - 2026-07-03 (CI test isolation)
 
 ### Fixed

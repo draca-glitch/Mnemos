@@ -16,11 +16,18 @@ import pytest
 
 @pytest.fixture
 def mnemos_with_tmpdb():
+    # Construct the store explicitly. The old env-var route
+    # (os.environ["MNEMOS_DB"] = path before Mnemos()) silently broke when
+    # any earlier-collected test imported mnemos first: DEFAULT_DB_PATH is
+    # frozen at import time, so these tests accumulated into the developer's
+    # default DB (observed 2026-07-03: 419 fixture memories in
+    # ~/.mnemos/memory.db, and enough archived Eiffel copies to crowd the
+    # fresh one out of tier-2 KNN and flake the recall assert).
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
-    os.environ["MNEMOS_DB"] = path
     from mnemos.core import Mnemos
-    m = Mnemos()
+    from mnemos.storage.sqlite_store import SQLiteStore
+    m = Mnemos(store=SQLiteStore(db_path=path))
     yield m
     m.close()
     for suffix in ("", "-journal", "-wal", "-shm"):
