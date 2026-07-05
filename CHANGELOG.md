@@ -4,6 +4,23 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.23.1] - 2026-07-05 (hermetic test suite: scrub MNEMOS_* env before import)
+
+### Fixed
+- Test suite was not hermetic: on a box with a live Mnemos deployment,
+  MNEMOS_* env vars from the login shell (e.g. MNEMOS_NLI_BACKEND=onnx,
+  MNEMOS_CONTRADICT_MODE=nli) plus a real NLI export in
+  ~/.cache/mnemos/nli-onnx leaked into the suite and failed 4 tests
+  (torch-fallback, multi-hop depth 1/2, rerank guard). Leak paths: import-time
+  constants in mnemos/constants.py and the _onnx_model_dir() cache-dir
+  fallback. New tests/conftest.py deletes all MNEMOS_* vars at conftest
+  import (before any test module, and therefore mnemos, is imported) and
+  points MNEMOS_NLI_ONNX_DIR at an empty temp dir so the real export is
+  invisible. Deleting MNEMOS_DB doubles as a safety net against a test ever
+  touching a real store. Found on TMG legacy (4 failed / 260 passed at
+  v10.22.0 and v10.23.0); with the conftest, 264 pass under a hostile env.
+  Test-only change, no runtime impact.
+
 ## [10.23.0] - 2026-07-05 (doctor flags an empty store instead of blessing it)
 
 ### Added
