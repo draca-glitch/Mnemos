@@ -1106,28 +1106,41 @@ def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge,
             pass
 
         scored, upserts = [], []
-        fresh_budget = NLI_FINDER_MAX_PAIRS
+        # Budget caps the pairs this run ADVANCES to the judge/queue, whether
+        # freshly scored or flagged from cache. Cached pairs below threshold are
+        # free (already resolved, not advancing). Before v10.21.1 the budget
+        # gated only fresh scoring, so cached hits above threshold bypassed it
+        # entirely and a MAX_PAIRS=0 "judge nothing new" run still flooded the
+        # judge with the cached-flagged backlog. Now MAX_PAIRS is a real ceiling
+        # on downstream work; unadvanced pairs (fresh or cached) backfill later.
+        budget = NLI_FINDER_MAX_PAIRS
         hits = deferred = 0
         for mid_a, mid_b, cos in candidates:
             key = (min(mid_a, mid_b), max(mid_a, mid_b))
             ha, hb = _chash(key[0]), _chash(key[1])
             hit = cache.get(key)
             if hit and hit[0] == ha and hit[1] == hb:
-                hits += 1
                 p = hit[2]
-            elif fresh_budget > 0:
-                fresh_budget -= 1
+                if p >= NLI_FINDER_THRESHOLD and budget <= 0:
+                    deferred += 1
+                    continue
+                hits += 1
+                if p >= NLI_FINDER_THRESHOLD:
+                    budget -= 1
+                    scored.append((mid_a, mid_b, cos, p))
+            elif budget > 0:
+                budget -= 1
                 p = nli.line_max_contradiction(
                     mem_by_id[mid_a].get("content", ""),
                     mem_by_id[mid_b].get("content", ""))
                 if p is None:
                     continue
                 upserts.append((key[0], key[1], ha, hb, p))
+                if p >= NLI_FINDER_THRESHOLD:
+                    scored.append((mid_a, mid_b, cos, p))
             else:
                 deferred += 1
                 continue
-            if p >= NLI_FINDER_THRESHOLD:
-                scored.append((mid_a, mid_b, cos, p))
         if upserts and execute:
             try:
                 conn.executemany(

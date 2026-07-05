@@ -4,6 +4,19 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.21.1] - 2026-07-05 (phase-4 finder budget also caps cache-flagged pairs)
+
+### Fixed
+- NLI_FINDER_MAX_PAIRS capped only fresh NLI scoring, so cache hits above
+  threshold advanced to the judge/queue regardless of the budget. A
+  MAX_PAIRS=0 "judge nothing new" run still flooded the judge with the
+  whole cached-flagged backlog (observed: a judge-only run processed 50
+  pairs where 11 were expected). The budget now caps pairs ADVANCED per
+  run (fresh-scored or cache-flagged); cached pairs below threshold stay
+  free, unadvanced pairs backfill on later runs, and MAX_PAIRS=0 is a
+  true no-op. Normal runs with ample budget are unchanged. Verified by
+  simulation across MAX_PAIRS in 0, 5, and 200.
+
 ## [10.21.0] - 2026-07-05 (contradiction judge gains an UNRELATED verdict)
 
 ### Fixed
