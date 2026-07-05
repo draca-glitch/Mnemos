@@ -4,6 +4,21 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.22.0] - 2026-07-05 (embed-text excludes Nyx bookkeeping tags; coherence stays green)
+
+### Fixed
+- prep_memory_text folded ALL tags into the canonical embed-text, but Nyx
+  rewrites bookkeeping tags (consolidated, nyx-split, merged-into-*,
+  split-from-*, split-part-*) on every consolidation cycle. Because the
+  coherence hash is computed over the embed-text, every memory that had
+  ever been consolidated reported as content/vector mismatched (observed:
+  723/723 on the production store) and `doctor` recommended a full
+  re-embed that would just recur on the next Nyx run. The embed-text now
+  excludes those churning, retrieval-irrelevant tags via stable_tags(),
+  so coherence stays green across consolidation; semantic tags are kept.
+  Adopting it requires a one-time re-embed of the active set (done on
+  Epsilon: 723 verified, stale=0). 260 tests pass unchanged.
+
 ## [10.21.1] - 2026-07-05 (phase-4 finder budget also caps cache-flagged pairs)
 
 ### Fixed

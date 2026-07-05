@@ -97,11 +97,40 @@ def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# Nyx consolidation rewrites these bookkeeping tags every cycle (merge/split
+# markers). They carry no retrieval signal, so folding them into the embed-text
+# only churns the vector and, worse, invalidates the coherence hash on every
+# store that has ever been consolidated. Excluded from the embed-text since
+# v10.22.0 so the canonical text is stable across consolidation.
+_NYX_TAG_EXACT = frozenset({"consolidated", "nyx-split", "nyx-cycle",
+                            "synthesized", "bridge"})
+_NYX_TAG_PREFIX = ("merged-into", "split-from", "split-part")
+
+
+def stable_tags(tags: str) -> str:
+    """Drop Nyx-internal bookkeeping tags, keep retrieval-relevant ones."""
+    if not tags:
+        return ""
+    kept = []
+    for t in tags.split(","):
+        s = t.strip()
+        if not s:
+            continue
+        low = s.lower()
+        if low in _NYX_TAG_EXACT or low.startswith(_NYX_TAG_PREFIX):
+            continue
+        kept.append(s)
+    return ", ".join(kept)
+
+
 def prep_memory_text(project, content, tags="", mem_type="", layer=""):
     """Build the canonical text representation used for embedding a memory.
 
-    Combines project, type, layer, content, and tags into a single string
-    so the embedding captures all the metadata that affects retrieval.
+    Combines project, type, layer, content, and retrieval-relevant tags so the
+    embedding captures the metadata that affects retrieval. Nyx bookkeeping tags
+    (merge/split markers) are excluded: they churn every consolidation cycle and
+    carry no retrieval signal, so including them only destabilizes the vector
+    and the coherence hash.
     """
     parts = [project]
     if mem_type and mem_type != "fact":
@@ -109,6 +138,7 @@ def prep_memory_text(project, content, tags="", mem_type="", layer=""):
     if layer and layer != "semantic":
         parts.append(f"[{layer}]")
     parts.append(content)
-    if tags:
-        parts.append(tags)
+    stable = stable_tags(tags)
+    if stable:
+        parts.append(stable)
     return " ".join(parts).strip()
