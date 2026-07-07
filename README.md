@@ -42,12 +42,14 @@ For other clients (Cursor, ChatGPT Desktop, Gemini), CLI usage, hooks, and the o
 
 ## Key properties
 
-- **CPU-only**: no GPU required. Embeddings and reranking via ONNX models that run on a regular laptop, NAS, Raspberry Pi 4+, or budget VPS. Even the optional consolidation LLM can run locally on CPU in "slow mode" since the Nyx cycle is a background job and quality matters more than speed.
+- **CPU-only**: no GPU required. Embeddings and reranking via ONNX models that run on a regular laptop, NAS, Raspberry Pi 4+, or budget VPS. Even the optional weekly-tier consolidation LLM can run locally on CPU in "slow mode"; the nightly consolidation tier needs no LLM at all (see below), and the Nyx cycle is a background job where quality matters more than speed.
 - **MCP-native**: works with any MCP-compatible AI client out of the box.
 - **CLI-friendly**: a full `mnemos` command-line tool ships alongside the MCP server, so you can store, search, ingest, and consolidate from any shell, script, or cron job, with or without an AI client attached.
 - **100% local**: no API calls, no telemetry, no cloud dependencies. Your memory stays on your machine.
 - **Pluggable backbones**: storage (SQLite by default, atomic single-file; Qdrant scaling layer for HNSW at 25K+ memories; Postgres backend is a stub, not implemented yet), embedder (any FastEmbed-compatible via `MNEMOS_EMBED_MODEL`), reranker (any cross-encoder via `MNEMOS_RERANKER_MODEL`), consolidation LLM (any OpenAI-compatible endpoint, or skip entirely).
-- **NLI decision layer (optional, v10.15)**: dedup confirmation and contradiction detection can run on natural-language-inference models instead of the reranker (`pip install mnemos[nli]`, export models once with `scripts/export_nli_onnx.py`, then `MNEMOS_DEDUP_CONFIRM=nli` + `MNEMOS_CONTRADICT_MODE=nli` + `MNEMOS_NYX_CONTRADICT_FINDER=nli`). A reranker answers "same topic?"; NLI answers "same claim or opposite claim?", which is what the store decision actually needs. Benchmarked on real production memories: contradiction AUC 0.94 vs 0.69, dedup false blocks 1 vs 16+. Language-agnostic: English content routes to an English checkpoint, everything else to a multilingual XNLI checkpoint. Runs on onnxruntime like the rest of the pipeline (fp32; int8 was rejected by a score-parity gate, see CHANGELOG 10.16.0), torch fallback via `mnemos[nli-torch]`.
+- **NLI decision layer (optional, v10.15)**: dedup confirmation and contradiction detection can run on natural-language-inference models instead of the reranker (`pip install mnemos[nli]`, export models once with `scripts/export_nli_onnx.py`, then `MNEMOS_DEDUP_CONFIRM=nli` + `MNEMOS_CONTRADICT_MODE=nli` + `MNEMOS_NYX_CONTRADICT_FINDER=nli`). A reranker answers "same topic?"; NLI answers "same claim or opposite claim?", which is what the store decision actually needs. Benchmarked on real production memories: contradiction AUC 0.94 vs 0.69, dedup false blocks 1 vs 16+. Language-agnostic: English content routes to an English checkpoint, everything else to a multilingual XNLI checkpoint. Runs on onnxruntime like the rest of the pipeline (fp32; int8 was rejected by a score-parity gate, see CHANGELOG 10.16.0), torch fallback via `mnemos[nli-torch]`. Since v10.17 the same NLI layer also gates the nightly consolidation cluster and finds contradictions there, so it earns its keep on both the store path and the background cycle.
+- **Two-tier consolidation (v10.17)**: the nightly Nyx cycle runs **zero-LLM**: SQL triage, mutual-top-k candidacy, an NLI cluster gate, mechanical line-union merges (facts are *selected and unioned*, never model-rewritten, τ=0.90), and an NLI contradiction finder that queues contradiction-candidate links. Deduping, clustering, and contradiction detection need no API key and no local LLM. A separate **weekly** tier adds LLM-driven weave / generative merge / synthesis and a contradiction judge that drains the nightly queue, *only* when an endpoint is configured. `mnemos consolidate --execute` runs the zero-LLM core by default and skips the enrichment phases (with a grep-able WARNING) instead of failing when no LLM is set.
+- **Self-checking & tier-2 recall (v10.19–v10.24)**: `mnemos doctor` verifies integrity, schema, FTS↔vector sync, content↔vector coherence (catches content edited without a re-embed), vector-model provenance, empty-store misconfiguration, and the archived-vector index; `mnemos doctor --migrate` applies safe repairs behind an automatic backup. Archived originals stay searchable through a separate tier-2 vector index (`mnemos reindex-archived`, `memory_search(..., expand_merged=True)`) even after Nyx has merged them away.
 
 ## Benchmarks
 
@@ -146,7 +148,7 @@ export MNEMOS_MIN_FREE_MB=500      # degrade to lighter search instead of OOM
 - **Models loaded**: FastEmbed e5-large only (~600 MB; drops to ~250 MB with `int8` variants)
 - **Search**: FTS5 + vec + RRF merge, no cross-encoder rerank
 - **Contradiction detection**: Tier-1 vec gate only; any close pair flagged as `contradicts`
-- **Nyx consolidation**: bookkeeping phases only (no LLM required), skip merge/weave/synthesis
+- **Nyx consolidation**: the full zero-LLM nightly tier runs (triage, candidacy, mechanical line-union merges, contradiction bookkeeping); the weekly LLM tier is skipped. The NLI cluster gate/finder engage only if the `mnemos[nli]` extra is installed, else the tier falls back to vec-gated candidacy
 - **Resource-aware models (v10.5.0)**: with `MNEMOS_MODEL_IDLE_TTL` set, an idle embedder/reranker is dropped and its RAM returned to the OS (the next query pays a one-off reload); `MNEMOS_MIN_FREE_MB` makes the search path degrade to vec-only then FTS5 under memory pressure rather than risk an OOM. Both default off, so nothing changes unless you opt in.
 - **Good for**: personal memory on constrained hardware, offline-first deployments
 
@@ -159,7 +161,7 @@ export MNEMOS_MIN_FREE_MB=500      # degrade to lighter search instead of OOM
 - **Models loaded**: FastEmbed e5-large (~600 MB) + Jina cross-encoder (~500 MB)
 - **Search**: full hybrid pipeline (FTS5 + vec + RRF + rerank), this is what the 98.1% R@5 benchmark runs on
 - **Contradiction detection**: three-tier with `relates` silent-link zone, no API cost per store
-- **Nyx consolidation**: bookkeeping only unless LLM is added; merge/weave/synthesis stay dormant
+- **Nyx consolidation**: the zero-LLM nightly tier runs in full (NLI cluster gate + mechanical line-union merges + contradiction detection); the weekly LLM tier (weave/generative-merge/synthesis) stays dormant until an endpoint is added
 - **Good for**: most users, homelabs, single-server personal deployments
 
 ### 3. Full LLM (premium precision, paid API per operation)
@@ -175,7 +177,7 @@ export MNEMOS_TOOL_USAGE_LOG=1       # optional: MCP call diagnostics
 - **Models loaded**: e5-large + Jina + LLM API (no local LLM weights)
 - **Search**: full hybrid pipeline (unchanged from standard profile)
 - **Contradiction detection**: five-way LLM classification - `contradicts`, `refines`, `evolves`, `relates`, `unrelated`
-- **Nyx consolidation**: all phases run on schedule - merge/weave/synthesize build a model of the user over time
+- **Nyx consolidation**: both tiers run on schedule - the zero-LLM nightly tier plus the weekly LLM tier (weave/generative-merge/synthesize) build a model of the user over time
 - **Analytics**: retrieval and tool-usage logs feed autoimprove benchmarks and quality analysis
 - **Good for**: production deployments where memory is a shared agent resource, teams, long-running research systems
 

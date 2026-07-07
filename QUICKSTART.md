@@ -51,7 +51,7 @@ mnemos search "vector storage" --project dev
 # Get a memory by id
 mnemos get 1
 
-# Health check
+# Health check (add --migrate to apply safe repairs behind an auto-backup)
 mnemos doctor
 ```
 
@@ -67,19 +67,42 @@ Example: `D:use sqlite-vec over pgvector ∵ embedded single-user @2026-02-13`
 
 Stores prose too, but the Nyx cycle will cemelify it over time. See [README §CML](README.md#cml-token-minimal-memory-format) for details.
 
-## Optional: weekly consolidation
+## Consolidation: the two-tier Nyx cycle
 
-The Nyx cycle merges duplicates, detects contradictions, and synthesizes cross-domain insights. Requires an LLM endpoint:
+Nyx keeps the store tidy over time. Since v10.17 it runs in two tiers.
+
+**Nightly (zero-LLM, no setup).** SQL triage, mutual-top-k candidacy, an NLI cluster gate, mechanical line-union merges (facts are *selected and unioned*, never rewritten by a model), and an NLI contradiction finder. No API key, no cloud, no local LLM:
+
+```bash
+mnemos consolidate --execute        # runs the zero-LLM core; auto-skips LLM phases if none configured
+```
+
+**Weekly (LLM-driven, optional).** With an OpenAI-compatible endpoint set, the *same command* additionally runs semantic weave, generative merge, and a contradiction judge that drains the nightly queue. Add `--nyx` for cross-domain synthesis (phase 5):
 
 ```bash
 export MNEMOS_LLM_API_URL="https://api.openai.com/v1/chat/completions"
 export MNEMOS_LLM_API_KEY="sk-..."
 export MNEMOS_LLM_MODEL="gpt-4o-mini"
 
-mnemos consolidate --execute
+mnemos consolidate --execute          # now includes LLM weave / merge / judge
+mnemos consolidate --execute --nyx    # + cross-domain synthesis
 ```
 
-Any OpenAI-compatible endpoint works (OpenAI, Anthropic via proxy, Ollama, OpenRouter, DigitalOcean Gradient, Groq, etc.). Skip entirely if you want a static memory store with no adaptive layer.
+Any OpenAI-compatible endpoint works (OpenAI, Anthropic, Ollama, OpenRouter, Groq, etc.). Skip the weekly tier entirely; the nightly tier still self-maintains the store every night with no LLM at all.
+
+## Optional: sharper store decisions (NLI)
+
+By default, store-time dedup and contradiction checks reuse the cross-encoder ("same topic?"). The optional NLI layer swaps in natural-language-inference models that answer the question dedup and contradiction detection actually need ("same claim, or the opposite claim?"), and it also powers the nightly Nyx cluster gate and contradiction finder:
+
+```bash
+pip install mnemos[nli]
+python scripts/export_nli_onnx.py         # one-time model export
+export MNEMOS_DEDUP_CONFIRM=nli
+export MNEMOS_CONTRADICT_MODE=nli
+export MNEMOS_NYX_CONTRADICT_FINDER=nli
+```
+
+CPU-only ONNX like the rest of the pipeline; English content routes to an English checkpoint, everything else to a multilingual XNLI one. Benchmarked on real production memories: contradiction AUC 0.94 vs 0.69, dedup false-blocks 1 vs 16+. Full rationale in [README §Key properties](README.md#key-properties).
 
 ## Next
 
