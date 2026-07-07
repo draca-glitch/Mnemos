@@ -1563,23 +1563,34 @@ class Mnemos:
         if not hasattr(self.store, "archived_missing_embeddings"):
             return {"error": "tier-2 index only supported on SQLite-based stores"}
         missing = self.store.archived_missing_embeddings(namespace=self.namespace)
+        # Legacy pass (v10.24.0): rows whose tier-2 meta carries a pre-v10.6
+        # truncated hash were also embedded under a pre-canonical formula, so
+        # they get re-embedded, not just re-hashed.
+        legacy = (self.store.archived_legacy_hash_rows(namespace=self.namespace)
+                  if hasattr(self.store, "archived_legacy_hash_rows") else [])
         pending = len(missing)
-        done = 0
-        for i in range(0, pending, batch_size):
-            batch = missing[i:i + batch_size]
-            texts = [
-                prep_memory_text(m.project, m.content, m.tags or "",
-                                 mem_type=m.type, layer=m.layer)
-                for m in batch
-            ]
-            vecs = embed(texts, prefix="passage")
-            for m, text, v in zip(batch, texts, vecs):
-                if v:
-                    self.store._store_archived_embedding(m.id, v, embed_text_hash(text))
-                    done += 1
+        done = legacy_done = 0
+        for batch_src, is_legacy in ((missing, False), (legacy, True)):
+            for i in range(0, len(batch_src), batch_size):
+                batch = batch_src[i:i + batch_size]
+                texts = [
+                    prep_memory_text(m.project, m.content, m.tags or "",
+                                     mem_type=m.type, layer=m.layer)
+                    for m in batch
+                ]
+                vecs = embed(texts, prefix="passage")
+                for m, text, v in zip(batch, texts, vecs):
+                    if v:
+                        self.store._store_archived_embedding(m.id, v, embed_text_hash(text))
+                        if is_legacy:
+                            legacy_done += 1
+                        else:
+                            done += 1
         return {
             "archived_pending_before": pending,
             "embedded_now": done,
+            "legacy_pending_before": len(legacy),
+            "legacy_reembedded": legacy_done,
             "archived_index_size": self.store.archived_embed_count(),
         }
 
@@ -1966,6 +1977,132 @@ class Mnemos:
                 report["checks"].append("Vector provenance: consistent")
         except Exception as e:
             report["issues"].append(f"Provenance check failed: {e}")
+
+        # --- Archive-side embedding lifecycle (v10.24.0) ---
+        # The 2026-07-07 forensic audit found three archive-side drifts the
+        # active-side checks never see: embed_meta tables created before the
+        # localtime DDL keep a UTC embedded_at default (synchronous embeds
+        # then look hours older than their memory's creation), hard deletes
+        # used to leave tier-2 rows behind, and consolidation used to archive
+        # memories without moving their vectors into the tier-2 index.
+        try:
+            from .storage.sqlite_store import _arch_join_col
+
+            # Timestamp dialect: detected from the table DDL itself, so the
+            # check is idempotent and needs no migration marker.
+            dialect_tables = []
+            for table in ("embed_meta", "embed_meta_arch"):
+                if table not in existing_tables:
+                    continue
+                ddl = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE name = ?", (table,)
+                ).fetchone()
+                if ddl and ddl[0] and "localtime" not in ddl[0]:
+                    dialect_tables.append(table)
+
+            arch_orphans = []
+            if "embed_meta_arch" in existing_tables:
+                arch_orphans = conn.execute(
+                    "SELECT e.id, e.source_id FROM embed_meta_arch e "
+                    "LEFT JOIN memories m ON m.id = e.source_id "
+                    "WHERE m.id IS NULL"
+                ).fetchall()
+
+            # Backup before these migrations too (the early backup only
+            # triggers on column/table drift).
+            if migrate and (dialect_tables or arch_orphans) \
+                    and "backup" not in report and hasattr(self.store, "db_path"):
+                import time as _time
+                backup = (f"{self.store.db_path}"
+                          f".bak-pre-doctor-migrate-{_time.strftime('%Y%m%d-%H%M%S')}")
+                try:
+                    self.store.backup(backup)
+                    report["backup"] = backup
+                except Exception as e:
+                    report["issues"].append(
+                        f"Backup failed; skipping archive-lifecycle migrations: {e}")
+                    dialect_tables, arch_orphans = [], []
+
+            if dialect_tables and migrate:
+                for table in dialect_tables:
+                    conn.execute(f"ALTER TABLE {table} RENAME TO {table}_utc_old")
+                    conn.execute(f"""
+                        CREATE TABLE {table} (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            source_db TEXT NOT NULL,
+                            source_id INTEGER NOT NULL,
+                            text_hash TEXT,
+                            model TEXT,
+                            embedded_at TEXT DEFAULT (datetime('now', 'localtime')),
+                            UNIQUE(source_db, source_id)
+                        )""")
+                    conn.execute(
+                        f"INSERT INTO {table} (id, source_db, source_id, text_hash, model, embedded_at) "
+                        f"SELECT id, source_db, source_id, text_hash, model, "
+                        f"CASE WHEN embedded_at IS NULL THEN NULL "
+                        f"ELSE datetime(embedded_at, 'localtime') END "
+                        f"FROM {table}_utc_old")
+                    conn.execute(f"DROP TABLE {table}_utc_old")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_meta_source "
+                             "ON embed_meta(source_db, source_id)")
+                conn.commit()
+                report["migrations_applied"].append(
+                    f"Converted embedded_at to localtime and rebuilt with "
+                    f"localtime default: {dialect_tables}")
+            elif dialect_tables:
+                report["issues"].append(
+                    f"embedded_at stored in UTC dialect in {dialect_tables} "
+                    "while the memories table uses localtime; timestamps "
+                    "cross-compare wrong by the UTC offset. Run doctor "
+                    "--migrate to convert")
+
+            if arch_orphans and migrate:
+                arch_col = _arch_join_col(conn)
+                for row in arch_orphans:
+                    conn.execute(
+                        f"DELETE FROM embed_vec_arch WHERE {arch_col} = ?",
+                        (row[0],))
+                    conn.execute(
+                        "DELETE FROM embed_meta_arch WHERE id = ?", (row[0],))
+                conn.commit()
+                report["migrations_applied"].append(
+                    f"Removed {len(arch_orphans)} orphan tier-2 embedding rows "
+                    "(memories hard-deleted before v10.24.0 left them behind)")
+            elif arch_orphans:
+                report["issues"].append(
+                    f"{len(arch_orphans)} orphan arch embedding rows whose "
+                    "memory no longer exists (pre-v10.24 hard-delete leak). "
+                    "Run doctor --migrate to clean")
+
+            if "embed_meta_arch" in existing_tables:
+                gaps = conn.execute(
+                    "SELECT COUNT(*) FROM memories m "
+                    "WHERE m.status = 'archived' AND m.namespace = ? "
+                    "AND NOT EXISTS (SELECT 1 FROM embed_meta_arch em "
+                    "WHERE em.source_db = 'memory' AND em.source_id = m.id)",
+                    (self.namespace,)).fetchone()[0]
+                legacy = conn.execute(
+                    "SELECT COUNT(*) FROM memories m "
+                    "JOIN embed_meta_arch em ON em.source_db = 'memory' "
+                    "AND em.source_id = m.id "
+                    "WHERE m.status = 'archived' AND m.namespace = ? "
+                    "AND (em.text_hash IS NULL OR length(em.text_hash) < 64)",
+                    (self.namespace,)).fetchone()[0]
+                if gaps or legacy:
+                    # Never auto-embedded here, same policy as active-side
+                    # coverage: embedding cost/time is caller-controlled.
+                    report["issues"].append(
+                        f"Tier-2 archive index incomplete: {gaps} archived "
+                        f"memories without a vector, {legacy} with a legacy "
+                        "pre-canonical hash. Run `mnemos reindex-archived`")
+                else:
+                    arch_n = conn.execute(
+                        "SELECT COUNT(*) FROM embed_meta_arch "
+                        "WHERE source_db = 'memory'").fetchone()[0]
+                    report["checks"].append(
+                        f"Tier-2 archive index: complete ({arch_n} vectors)")
+        except Exception as e:
+            report["issues"].append(f"Archive-lifecycle check failed: {e}")
 
         # Re-check issues post-migration so callers see the clean state
         if migrate and report["migrations_applied"]:

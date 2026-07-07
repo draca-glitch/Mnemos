@@ -4,6 +4,52 @@ All notable changes to Mnemos. Dates are from the original private development
 repository, where the system existed under an internal name (`agent-memory`)
 before being open-sourced as Mnemos in this repo.
 
+## [10.24.0] - 2026-07-07 (archive-side embedding lifecycle: no more tier-2 leaks)
+
+Driven by a forensic audit of the prod embedding-row lifecycle (the open item
+from the 10.19.0 coherence check's first prod run): 51 archived memories had
+no tier-2 vector, clustered exactly on consolidation days; 3 orphan arch rows
+survived hard-deleted memories; embed_meta tables created before the
+localtime DDL still carried a UTC embedded_at default, making synchronous
+embeds look hours older than their memory's creation.
+
+### Fixed
+- **Consolidation archived memories without moving their vectors.** Both raw
+  status-UPDATE sites in phases (merge, supersede) now go through a new
+  `archive_memory(conn, mid, tag_suffix)` helper that archives and moves the
+  vector into the tier-2 index in one step. `cleanup_orphan_vectors` remains
+  as the end-of-cycle safety net.
+- **Soft delete now moves the vector to the tier-2 index** instead of
+  leaving it in the active index (`delete_memory(hard=False)`); the move
+  never blocks the archive itself.
+- **Hard delete purges tier-2 rows too.** `delete_memory(hard=True)` used to
+  stop at the active index, leaving embed_meta_arch/embed_vec_arch rows
+  behind forever.
+- **Doctor: UTC embedded_at dialect detected and migrated.** Tables whose DDL
+  predates the localtime default are rebuilt with the canonical schema and
+  existing values converted via `datetime(x, 'localtime')` (DST-correct,
+  detected from sqlite_master so the check needs no marker and is
+  idempotent). Pre-migration backup taken.
+- **Doctor: orphan tier-2 rows detected and cleaned** (`--migrate`), plus
+  advisory counts for archived memories without a vector and rows with
+  legacy pre-canonical hashes, both pointing at `reindex-archived`.
+
+### Added
+- `reindex-archived` re-embeds legacy-hash rows: tier-2 meta rows with a
+  pre-v10.6 truncated (16-char) hash were embedded under a pre-canonical
+  formula; they are re-embedded and re-hashed, reported as
+  `legacy_reembedded`. Backfill of missing vectors unchanged and idempotent.
+- `embed_vec_arch` is created with the declared-PK schema
+  (`vec0(id INTEGER PRIMARY KEY, ...)`) on new stores, matching what the
+  active side already handles; existing implicit-rowid arch tables keep
+  working through a new `_arch_join_col` detection used by every arch-side
+  query (store, search, move, cleanup, doctor). No rebuild of existing
+  tables: both schemas are supported in the wild, same policy as embed_vec.
+- Conn-level lifecycle helpers `move_embedding_to_archive_conn` /
+  `_store_archived_embedding_conn` shared by the store methods, the
+  consolidation phases and external plumbing.
+- 9 new tests (273 total).
+
 ## [10.23.1] - 2026-07-05 (hermetic test suite: scrub MNEMOS_* env before import)
 
 ### Fixed

@@ -161,24 +161,10 @@ def cleanup_orphan_vectors(conn, execute: bool = True):
             ).fetchone()
             if vrow and vrow[0] is not None:
                 emb = json.loads(vrow[0])
-                ex = conn.execute(
-                    "SELECT id FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
-                    (SOURCE_KEY, source_id),
-                ).fetchone()
-                if ex:
-                    conn.execute("DELETE FROM embed_vec_arch WHERE rowid = ?", (ex[0],))
-                    conn.execute(
-                        "DELETE FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
-                        (SOURCE_KEY, source_id),
-                    )
-                cur = conn.execute(
-                    "INSERT INTO embed_vec_arch(embedding) VALUES (?)", (_serialize_vec(emb),)
-                )
-                conn.execute(
-                    "INSERT INTO embed_meta_arch (id, source_db, source_id, text_hash, model) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (cur.lastrowid, SOURCE_KEY, source_id, thash, emodel),
-                )
+                from ..storage.sqlite_store import _store_archived_embedding_conn
+                _store_archived_embedding_conn(conn, source_id, emb,
+                                               text_hash=thash, commit=False,
+                                               model=emodel, source_key=SOURCE_KEY)
                 moved += 1
             conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta_id,))
             conn.execute("DELETE FROM embed_meta WHERE id = ?", (meta_id,))

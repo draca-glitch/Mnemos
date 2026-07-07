@@ -89,6 +89,34 @@ def _vec_join_col(conn):
         return "rowid"
 
 
+def archive_memory(conn, mid, tag_suffix=None):
+    """Archive a memory and move its vector into the tier-2 index.
+
+    The single correct way for consolidation to archive: the raw
+    status-UPDATE-only path leaked vectors (archived memories invisible to
+    tier-2 recall until reindex-archived; 51 gaps found in prod 2026-07-07).
+    The vector move never blocks the archive itself.
+    """
+    if tag_suffix:
+        conn.execute(
+            "UPDATE memories SET status = 'archived', "
+            "updated_at = datetime('now', 'localtime'), "
+            "tags = tags || ',' || ? WHERE id = ?",
+            (tag_suffix, mid),
+        )
+    else:
+        conn.execute(
+            "UPDATE memories SET status = 'archived', "
+            "updated_at = datetime('now', 'localtime') WHERE id = ?",
+            (mid,),
+        )
+    try:
+        from ..storage.sqlite_store import move_embedding_to_archive_conn
+        move_embedding_to_archive_conn(conn, mid, source_key="memory")
+    except Exception:
+        pass
+
+
 def store_embeddings(conn, tuples, model=None):
     """Bulk-insert embeddings via the SQLite vec extension."""
     import struct as _struct
@@ -549,13 +577,7 @@ def apply_merge(conn, cluster_ids, merged_content, mem_by_id):
             )
 
         for mid in cluster_ids:
-            conn.execute(
-                "UPDATE memories SET status = 'archived', "
-                "updated_at = datetime('now', 'localtime'), "
-                "tags = tags || ',merged-into-' || ? "
-                "WHERE id = ?",
-                (str(new_id), mid),
-            )
+            archive_memory(conn, mid, tag_suffix=f"merged-into-{new_id}")
 
         # Lineage row: get_merged_sources / search(expand_merged=True) read
         # exclusively from nyx_insights, so without this the primary merge
@@ -1277,12 +1299,7 @@ def phase_contradict(conn, mergeable_embeddings, mem_by_id, is_surge,
                     "(verified/high-importance guard); link recorded only")
                 continue
             # Archive the older memory, link to newer
-            conn.execute(
-                "UPDATE memories SET status='archived', "
-                "updated_at=datetime('now','localtime'), "
-                "tags=tags||',superseded-by-'||? WHERE id=?",
-                (str(newer_id), older_id),
-            )
+            archive_memory(conn, older_id, tag_suffix=f"superseded-by-{newer_id}")
             conn.execute(
                 "INSERT OR IGNORE INTO memory_links "
                 "(source_id, target_id, relation_type, strength) "

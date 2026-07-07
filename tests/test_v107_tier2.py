@@ -112,7 +112,8 @@ def test_reindex_archived_backfills_missing(mnemos_with_tmpdb):
         conn.execute("DELETE FROM embed_meta WHERE source_id=?", (mid,))
     am = conn.execute("SELECT id FROM embed_meta_arch WHERE source_id=?", (mid,)).fetchone()
     if am:
-        conn.execute("DELETE FROM embed_vec_arch WHERE rowid=?", (am["id"],))
+        from mnemos.storage.sqlite_store import _arch_join_col
+        conn.execute(f"DELETE FROM embed_vec_arch WHERE {_arch_join_col(conn)}=?", (am["id"],))
         conn.execute("DELETE FROM embed_meta_arch WHERE source_id=?", (mid,))
     conn.commit()
     assert mid in {x.id for x in m.store.archived_missing_embeddings()}

@@ -33,6 +33,108 @@ def _serialize_vec(vec):
     return struct.pack(f"{len(vec)}f", *vec)
 
 
+def _vec_join_col_conn(conn, table):
+    """Join/PK column for a vec0 table on this connection: 'id' when the
+    schema declares `id INTEGER PRIMARY KEY`, 'rowid' otherwise. Conn-level
+    twin of SQLiteStore._get_vec_join_col for callers that only hold a
+    connection (consolidation phases, external plumbing)."""
+    try:
+        conn.execute(f"SELECT id FROM {table} LIMIT 0").fetchone()
+        return "id"
+    except sqlite3.OperationalError:
+        return "rowid"
+
+
+def _arch_join_col(conn):
+    return _vec_join_col_conn(conn, "embed_vec_arch")
+
+
+def _store_archived_embedding_conn(conn, mid, embedding, text_hash=None,
+                                   commit=True, model=None,
+                                   source_key="memory"):
+    """Insert or replace a memory's embedding in the tier-2 archived index.
+
+    Handles both embed_vec_arch schemas (implicit rowid vs declared id PK),
+    same policy as _store_embedding on the active side."""
+    join_col = _arch_join_col(conn)
+    existing = conn.execute(
+        "SELECT id FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
+        (source_key, mid),
+    ).fetchone()
+    if existing:
+        conn.execute(f"DELETE FROM embed_vec_arch WHERE {join_col} = ?",
+                     (existing[0],))
+        conn.execute(
+            "DELETE FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
+            (source_key, mid),
+        )
+    if join_col == "id":
+        cur = conn.execute(
+            "INSERT INTO embed_meta_arch (source_db, source_id, text_hash, model) VALUES (?, ?, ?, ?)",
+            (source_key, mid, text_hash, model),
+        )
+        meta_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO embed_vec_arch(id, embedding) VALUES (?, ?)",
+            (meta_id, _serialize_vec(embedding)),
+        )
+    else:
+        cur = conn.execute(
+            "INSERT INTO embed_vec_arch(embedding) VALUES (?)",
+            (_serialize_vec(embedding),),
+        )
+        vec_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO embed_meta_arch (id, source_db, source_id, text_hash, model) VALUES (?, ?, ?, ?, ?)",
+            (vec_id, source_key, mid, text_hash, model),
+        )
+    if commit:
+        conn.commit()
+
+
+def move_embedding_to_archive_conn(conn, mid, source_key="memory"):
+    """Move a memory's vector from the active index into the archived index.
+
+    Conn-level implementation shared by the store method, the consolidation
+    phases (which archive via raw UPDATEs and previously leaked vectors,
+    the 51-gap finding of the 2026-07-07 forensic audit) and external
+    plumbing. Returns False when there is no active embedding to move."""
+    active_col = _vec_join_col_conn(conn, "embed_vec")
+    meta = conn.execute(
+        "SELECT id, text_hash, model FROM embed_meta WHERE source_db = ? AND source_id = ?",
+        (source_key, mid),
+    ).fetchone()
+    if not meta:
+        return False
+    meta_id, meta_hash, meta_model = meta[0], meta[1], meta[2]
+    vrow = conn.execute(
+        f"SELECT vec_to_json(embedding) AS j FROM embed_vec WHERE {active_col} = ?",
+        (meta_id,),
+    ).fetchone()
+    if not vrow or vrow[0] is None:
+        return False
+    import json as _json
+    # Insert-into-arch and delete-from-active commit together: a crash in
+    # between must not leave the vector in both indexes (invisible to the
+    # reconcile check, which only looks for missing arch copies).
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        _store_archived_embedding_conn(conn, mid, _json.loads(vrow[0]),
+                                       meta_hash, commit=False,
+                                       model=meta_model, source_key=source_key)
+        conn.execute(f"DELETE FROM embed_vec WHERE {active_col} = ?", (meta_id,))
+        conn.execute(
+            "DELETE FROM embed_meta WHERE source_db = ? AND source_id = ?",
+            (source_key, mid),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return True
+
+
 def _ensure_vec_db(path, dims=FASTEMBED_DIMS):
     """Open a SQLite connection with the sqlite-vec extension loaded."""
     import sqlite_vec
@@ -59,7 +161,11 @@ def _ensure_vec_db(path, dims=FASTEMBED_DIMS):
     # hits before the filter runs. A separate index lets primary search stay
     # active-only with zero regression while expand_merged can vector-search
     # the archived originals directly instead of only reaching them by lineage.
-    conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS embed_vec_arch USING vec0(embedding float[{dims}])")
+    # Declared-PK schema (v10.24.0) to match what _get_vec_join_col already
+    # handles on the active side; pre-existing implicit-rowid arch tables
+    # keep working through _arch_join_col detection, mirroring the active
+    # table's both-schemas-in-the-wild policy.
+    conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS embed_vec_arch USING vec0(id INTEGER PRIMARY KEY, embedding float[{dims}])")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS embed_meta_arch (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -562,6 +668,23 @@ class SQLiteStore(MnemosStore):
                     "DELETE FROM embed_meta WHERE source_db = ? AND source_id = ?",
                     (self.SOURCE_KEY, mid),
                 )
+            # Tier-2 rows too: hard delete used to stop at the active index,
+            # leaving arch meta/vec rows behind forever (3 orphans found in
+            # prod by the 2026-07-07 audit).
+            arch = conn.execute(
+                "SELECT id FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
+                (self.SOURCE_KEY, mid),
+            ).fetchone()
+            if arch:
+                arch_col = _arch_join_col(conn)
+                conn.execute(
+                    f"DELETE FROM embed_vec_arch WHERE {arch_col} = ?",
+                    (arch["id"],),
+                )
+                conn.execute(
+                    "DELETE FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
+                    (self.SOURCE_KEY, mid),
+                )
             # Links referencing a hard-deleted memory would otherwise persist
             # as phantom rows forever (nothing else ever prunes by absence).
             conn.execute(
@@ -569,12 +692,20 @@ class SQLiteStore(MnemosStore):
                 (mid, mid),
             )
             conn.execute("DELETE FROM memories WHERE id = ?", (mid,))
+            conn.commit()
         else:
             conn.execute(
                 "UPDATE memories SET status = 'archived', updated_at = datetime('now', 'localtime') WHERE id = ?",
                 (mid,),
             )
-        conn.commit()
+            conn.commit()
+            # Move the vector into the tier-2 index so the archived memory
+            # stays reachable by expand_merged. Never blocks the archive
+            # itself; reindex-archived is the catch-up for failures here.
+            try:
+                self.move_embedding_to_archive(mid)
+            except Exception:
+                pass
         return True
 
     # --- Search ---
@@ -688,75 +819,23 @@ class SQLiteStore(MnemosStore):
                                   model: Optional[str] = FASTEMBED_MODEL):
         """Store/replace a memory's embedding in the tier-2 archived index.
 
-        Mirrors _store_embedding but targets embed_vec_arch / embed_meta_arch,
-        which we always create as the implicit-rowid vec0 schema.
+        Mirrors _store_embedding; handles both arch vec schemas (implicit
+        rowid on pre-v10.24 stores, declared id PK on new ones).
         """
-        conn = self._get_conn()
-        existing = conn.execute(
-            "SELECT id FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
-            (self.SOURCE_KEY, mid),
-        ).fetchone()
-        if existing:
-            conn.execute("DELETE FROM embed_vec_arch WHERE rowid = ?", (existing["id"],))
-            conn.execute(
-                "DELETE FROM embed_meta_arch WHERE source_db = ? AND source_id = ?",
-                (self.SOURCE_KEY, mid),
-            )
-        cur = conn.execute(
-            "INSERT INTO embed_vec_arch(embedding) VALUES (?)",
-            (_serialize_vec(embedding),),
-        )
-        vec_id = cur.lastrowid
-        conn.execute(
-            "INSERT INTO embed_meta_arch (id, source_db, source_id, text_hash, model) VALUES (?, ?, ?, ?, ?)",
-            (vec_id, self.SOURCE_KEY, mid, text_hash, model),
-        )
-        if commit:
-            conn.commit()
+        _store_archived_embedding_conn(self._get_conn(), mid, embedding,
+                                       text_hash=text_hash, commit=commit,
+                                       model=model, source_key=self.SOURCE_KEY)
 
     def move_embedding_to_archive(self, mid: int) -> bool:
         """Move a memory's vector from the active index into the archived index.
 
-        Called when a memory is archived by consolidation: its content now
-        lives in a consolidated active memory, but we keep the original's
-        vector for tier-2 recall instead of deleting it. Returns False if the
-        memory had no active embedding to move.
+        Called when a memory is archived: its content now lives in a
+        consolidated active memory (or it was soft-deleted), but we keep the
+        original's vector for tier-2 recall instead of deleting it. Returns
+        False if the memory had no active embedding to move.
         """
-        conn = self._get_conn()
-        join_col = self._get_vec_join_col()
-        meta = conn.execute(
-            "SELECT id, text_hash, model FROM embed_meta WHERE source_db = ? AND source_id = ?",
-            (self.SOURCE_KEY, mid),
-        ).fetchone()
-        if not meta:
-            return False
-        vrow = conn.execute(
-            f"SELECT vec_to_json(embedding) AS j FROM embed_vec WHERE {join_col} = ?",
-            (meta["id"],),
-        ).fetchone()
-        if not vrow or vrow["j"] is None:
-            return False
-        import json as _json
-        # Insert-into-arch and delete-from-active commit together: the arch
-        # insert used to commit on its own, so a crash before the deletes
-        # left the vector in BOTH indexes, invisible to the reconcile check
-        # (which only looks for missing arch copies).
-        if not conn.in_transaction:
-            conn.execute("BEGIN IMMEDIATE")
-        try:
-            self._store_archived_embedding(mid, _json.loads(vrow["j"]),
-                                           meta["text_hash"], commit=False,
-                                           model=meta["model"])
-            conn.execute(f"DELETE FROM embed_vec WHERE {join_col} = ?", (meta["id"],))
-            conn.execute(
-                "DELETE FROM embed_meta WHERE source_db = ? AND source_id = ?",
-                (self.SOURCE_KEY, mid),
-            )
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        return True
+        return move_embedding_to_archive_conn(self._get_conn(), mid,
+                                              source_key=self.SOURCE_KEY)
 
     def search_vec_archived(self, embedding, namespace=None, project=None,
                             subcategory=None, layer=None, type_filter=None,
@@ -769,10 +848,11 @@ class SQLiteStore(MnemosStore):
         """
         conn = self._get_conn()
         ns = namespace or self.namespace
+        arch_col = _arch_join_col(conn)
         rows = conn.execute(
-            """SELECT em.source_id, ev.distance
+            f"""SELECT em.source_id, ev.distance
                FROM embed_vec_arch ev
-               JOIN embed_meta_arch em ON em.id = ev.rowid
+               JOIN embed_meta_arch em ON em.id = ev.{arch_col}
                WHERE em.source_db = ? AND ev.embedding MATCH ? AND k = ?
                ORDER BY ev.distance""",
             (self.SOURCE_KEY, _serialize_vec(embedding), limit * 3),
@@ -823,6 +903,24 @@ class SQLiteStore(MnemosStore):
                    WHERE em.source_db = ? AND em.source_id = m.id
                )""",
             (ns, self.SOURCE_KEY),
+        ).fetchall()
+        return [self._row_to_memory(r) for r in rows]
+
+    def archived_legacy_hash_rows(self, namespace=None) -> list:
+        """Archived memory rows whose tier-2 meta carries a legacy hash.
+
+        Pre-v10.6 plumbing wrote 16-char truncated hashes; those vectors
+        also predate the canonical embed-text formula, so reindex-archived
+        re-embeds them instead of just re-hashing.
+        """
+        conn = self._get_conn()
+        ns = namespace or self.namespace
+        rows = conn.execute(
+            """SELECT m.* FROM memories m
+               JOIN embed_meta_arch em ON em.source_db = ? AND em.source_id = m.id
+               WHERE m.status = 'archived' AND m.namespace = ?
+               AND (em.text_hash IS NULL OR length(em.text_hash) < 64)""",
+            (self.SOURCE_KEY, ns),
         ).fetchall()
         return [self._row_to_memory(r) for r in rows]
 
