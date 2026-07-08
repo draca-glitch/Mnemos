@@ -1,6 +1,6 @@
 # Agent instructions for Mnemos
 
-This file is an **example** of what to put in your AI client's project-level system-prompt file (`CLAUDE.md` for Claude Code, `.cursorrules` for Cursor, custom-instructions field for Claude Desktop, etc.) to get proactive, high-quality use of the Mnemos MCP tools.
+This file is an **example** of what to put in your AI client's project-level system-prompt file (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex, `.cursorrules` for Cursor, custom-instructions field for Claude Desktop, etc.) to get proactive, high-quality use of the Mnemos MCP tools.
 
 It's a template, not something Mnemos reads. Copy whichever block matches your configuration into your own project's agent-rules file.
 
@@ -10,7 +10,7 @@ The MCP tool descriptions already cover the *format* the agent should use when w
 
 ## For CML mode deployments (default)
 
-Copy this into `~/.claude/CLAUDE.md`, your project's `CLAUDE.md`, `.cursorrules`, or your Claude Desktop custom instructions:
+Copy this into `~/.claude/CLAUDE.md`, your project's `CLAUDE.md`, `AGENTS.md` for Codex, `.cursorrules`, or your Claude Desktop custom instructions:
 
 ```markdown
 ## Memory (Mnemos)
@@ -134,4 +134,4 @@ them proactively.
 
 ## A note on system-prompt scope
 
-Mnemos can only instruct the AI through the MCP tool descriptions it exposes. `MNEMOS_CML_MODE` controls those and the Nyx cycle prompts, which is everything Mnemos *owns*. Your project's `CLAUDE.md` (or equivalent) is **yours to manage**; Mnemos has no way to rewrite it when you flip the mode. If you switch between CML and prose deployments, swap the corresponding block above into your agent-rules file.
+Mnemos can only instruct the AI through the MCP tool descriptions it exposes. `MNEMOS_CML_MODE` controls those and the Nyx cycle prompts, which is everything Mnemos *owns*. Your project's `CLAUDE.md`, `AGENTS.md`, or equivalent agent-rules file is **yours to manage**; Mnemos has no way to rewrite it when you flip the mode. If you switch between CML and prose deployments, swap the corresponding block above into your agent-rules file.

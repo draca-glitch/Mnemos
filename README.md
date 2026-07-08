@@ -23,11 +23,14 @@ pip install -e .
 
 # Register with Claude Code
 claude mcp add -s user mnemos $(pwd)/venv/bin/mnemos serve
+
+# Or register with Codex
+codex mcp add mnemos -- $(pwd)/venv/bin/mnemos-mcp
 ```
 
 **First run downloads ~800 MB of ONNX models** (FastEmbed `multilingual-e5-large` embedder + Jina Reranker v2) into `~/.cache/fastembed/`. One-time cost, no GPU, no API key. Subsequent runs are offline.
 
-**Add the agent instructions to your AI client.** Having the MCP tools available is not enough; the agent needs to be told *when* to search, *when* to store, and *what format* to use. Copy the ready-made block from [docs/agent-instructions.md](docs/agent-instructions.md) into your `~/.claude/CLAUDE.md` (Claude Code), your project's `CLAUDE.md`, `.cursorrules` (Cursor), or your Claude Desktop custom instructions. Without this, the model has the tools but will not use them proactively.
+**Add the agent instructions to your AI client.** Having the MCP tools available is not enough; the agent needs to be told *when* to search, *when* to store, and *what format* to use. Copy the ready-made block from [docs/agent-instructions.md](docs/agent-instructions.md) into your `~/.claude/CLAUDE.md` (Claude Code), `AGENTS.md` (Codex), `.cursorrules` (Cursor), or your Claude Desktop custom instructions. Without this, the model has the tools but will not use them proactively.
 
 **If you use Claude Code, disable its built-in automemory** so the two stores don't compete:
 
@@ -192,7 +195,7 @@ Realistic compression: 14% on already-dense fact entries, up to 60% on narrative
 ## Documentation
 
 - **[QUICKSTART.md](QUICKSTART.md)**: five-minute install + first memory + first search
-- **[docs/usage.md](docs/usage.md)**: CLI reference, MCP client setup, Nyx cycle config, session hooks, ingest, storage backends, RAM
+- **[docs/usage.md](docs/usage.md)**: CLI reference, MCP client setup including Claude Code and Codex, Nyx cycle config, session hooks, ingest, storage backends, RAM
 - **[docs/features.md](docs/features.md)**: what's in the box: pipeline, models, temporal decay, Nyx phases, contradiction detection, forgetting
 - **[docs/cml.md](docs/cml.md)**: CML grammar, fidelity benchmarks, opt-out
 - **[docs/english-primary.md](docs/english-primary.md)**: the English-primary store convention, why it feeds the NLI layer, and the migration runbook for existing non-English stores
@@ -201,7 +204,7 @@ Realistic compression: 14% on already-dense fact entries, up to 60% on narrative
 - **[docs/philosophy.md](docs/philosophy.md)**: why the tool surface is minimal, why no LLM in the search path, what the Nyx cycle actually learns
 - **[docs/origin.md](docs/origin.md)**: why this exists, why the name, why v10 in a brand-new repo
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: deep technical reference: data model, retrieval mechanics, storage internals
-- **[docs/agent-instructions.md](docs/agent-instructions.md)**: copy-paste CLAUDE.md blocks for CML and prose modes
+- **[docs/agent-instructions.md](docs/agent-instructions.md)**: copy-paste agent rules for CML and prose modes (`CLAUDE.md`, `AGENTS.md`, Cursor rules, custom prompts)
 
 ## Supporting Mnemos
 

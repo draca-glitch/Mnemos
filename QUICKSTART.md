@@ -23,6 +23,12 @@ Claude Code users can register Mnemos in one command (use the absolute path to t
 claude mcp add -s user mnemos $(pwd)/venv/bin/mnemos serve
 ```
 
+Codex users can register the same server with:
+
+```bash
+codex mcp add mnemos -- mnemos-mcp
+```
+
 For Cursor, ChatGPT Desktop, Gemini, or any other MCP-compatible client, add the equivalent entry to that client's MCP config:
 
 ```json
@@ -113,6 +119,6 @@ CPU-only ONNX like the rest of the pipeline; English content routes to an Englis
 
 - Full features and rationale: [README.md](README.md)
 - Architecture deep-dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Copy-paste agent instructions for your `CLAUDE.md` / Cursor rules / custom system prompt: [docs/agent-instructions.md](docs/agent-instructions.md)
+- Copy-paste agent instructions for your `CLAUDE.md` / `AGENTS.md` / Cursor rules / custom system prompt: [docs/agent-instructions.md](docs/agent-instructions.md)
 - Reproducible benchmarks: [benchmarks/README.md](benchmarks/README.md)
 - Version history: [CHANGELOG.md](CHANGELOG.md)

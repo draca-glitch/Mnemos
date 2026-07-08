@@ -19,7 +19,7 @@ source venv/bin/activate
 pip install -e .
 ```
 
-### Register with Claude Code (or any MCP client)
+### Register with Claude Code, Codex, or any MCP client
 
 The easiest path for Claude Code is the built-in CLI:
 
@@ -28,6 +28,28 @@ claude mcp add -s user mnemos /path/to/venv/bin/mnemos serve
 ```
 
 That writes the server into your user-scoped MCP config (`~/.claude.json`) automatically.
+
+For Codex, use its MCP CLI:
+
+```bash
+codex mcp add mnemos -- /path/to/venv/bin/mnemos-mcp
+```
+
+That writes the server into Codex's MCP config (`~/.codex/config.toml`). If you
+want an explicit database path or namespace, pass environment variables during
+registration:
+
+```bash
+codex mcp add mnemos \
+  --env MNEMOS_DB=/home/you/.mnemos/memory.db \
+  --env MNEMOS_NAMESPACE=default \
+  -- /path/to/venv/bin/mnemos-mcp
+```
+
+Then add the behavior instructions from
+[`docs/agent-instructions.md`](agent-instructions.md) to your Codex
+`AGENTS.md`. Registering the MCP server exposes the tools; `AGENTS.md` tells
+Codex when to use memory and how to write CML.
 
 For other MCP clients (Cursor, ChatGPT Desktop, Gemini, etc.), add the equivalent entry to whatever config file that client uses:
 
