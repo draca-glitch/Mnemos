@@ -4,18 +4,23 @@ Five-minute walkthrough. For the full story (architecture, benchmarks, CML, Nyx 
 
 ## Install
 
+Mnemos is not on PyPI (the `mnemos` name there is an unrelated project), so install from source:
+
 ```bash
-pip install mnemos
+git clone https://github.com/draca-glitch/Mnemos.git
+cd Mnemos
+python3 -m venv venv && source venv/bin/activate
+pip install -e .
 ```
 
 Python 3.11+ required. CPU-only, no GPU. First `mnemos` invocation downloads the embedding model (e5-large, ~1 GB) into `~/.cache/fastembed/`.
 
 ## Register with your AI client
 
-Claude Code users can register Mnemos in one command:
+Claude Code users can register Mnemos in one command (use the absolute path to the venv binary so the client finds it without the venv active):
 
 ```bash
-claude mcp add -s user mnemos mnemos-mcp
+claude mcp add -s user mnemos $(pwd)/venv/bin/mnemos serve
 ```
 
 For Cursor, ChatGPT Desktop, Gemini, or any other MCP-compatible client, add the equivalent entry to that client's MCP config:

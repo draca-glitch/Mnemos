@@ -84,8 +84,8 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-Dependencies: `mnemos` CLI on `$PATH` (installed via `pip install mnemos`
-or `uv pip install mnemos`), and `jq` for parsing the `UserPromptSubmit`
+Dependencies: `mnemos` CLI on `$PATH` (installed from source, see
+[QUICKSTART](../QUICKSTART.md#install)), and `jq` for parsing the `UserPromptSubmit`
 JSON payload.
 
 ## Wiring the CWD → project heuristic
