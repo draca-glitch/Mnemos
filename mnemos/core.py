@@ -330,41 +330,19 @@ class Mnemos:
         mutations go through store APIs so FTS and vec stay consistent. Returns
         a summary dict. Reuses the same splitter as the live store path.
         """
-        if not hasattr(self.store, "_get_conn"):
-            return {"error": "remediate-oversized requires the SQLite backend"}
         from .splitter import (split_content, split_is_lossless,
                                split_preserves_all_sentences, explode_cml_lines)
 
-        conn = self.store._get_conn()
-        clause = "length(content) > ?"
-        params = [min_size]
-        if max_size:
-            clause += " AND length(content) <= ?"
-            params.append(max_size)
-        params.append(self.namespace)
-        status_clause = "status IN ('active','archived')" if include_archived else "status='active'"
-        rows = conn.execute(
-            f"SELECT id FROM memories WHERE {status_clause} AND consolidation_lock=0 "
-            f"AND {clause} AND namespace=? ORDER BY length(content) DESC",
-            params,
-        ).fetchall()
-        ids = [r["id"] for r in rows]
-        # Idempotency: skip memories that already have split children, so a
-        # re-run (e.g. with hard=True for the single-line residue) never
-        # double-splits the already-atomized backlog.
-        done = set()
-        for r in conn.execute(
-            "SELECT tags FROM memories WHERE tags LIKE '%split-from:#%' AND namespace=?",
-            (self.namespace,),
-        ):
-            # findall, not search: a re-split child inherits its parent's
-            # split-from:#grandparent, so a single match would mark the
-            # grandparent done but never the immediate parent (infinite re-split).
-            for gid in re.findall(r"split-from:#(\d+)", r["tags"] or ""):
-                done.add(int(gid))
-        ids = [i for i in ids if i not in done]
-        if limit:
-            ids = ids[:limit]
+        ids = self.store.find_oversized_memories(
+            self.namespace, min_size, max_size=max_size,
+            include_archived=include_archived, limit=limit,
+        )
+        if not ids:
+            return {
+                "scanned": 0, "split": 0, "children_created": 0,
+                "archived": 0, "skipped_unsplittable": 0, "errors": 0,
+                "dry_run": dry_run, "min_size": min_size, "max_size": max_size,
+            }
 
         summary = {
             "scanned": len(ids), "split": 0, "children_created": 0,
@@ -472,29 +450,22 @@ class Mnemos:
         # signal that FTS can miss when the subject is a short, rare token
         # (FTS5 tokenizers drop 1-2 char words, and BM25 under-weights
         # very short queries). Only runs on SQLite-backed stores since
-        # we need a raw conn for the LIKE scan; other backends simply
+        # we need a content LIKE scan; other backends simply
         # skip this tier and rely on FTS + vector.
         cml_type, subject = _extract_cml_subject(content)
-        if cml_type and subject and CML_MODE != "off" and hasattr(self.store, "_get_conn"):
+        if cml_type and subject and CML_MODE != "off":
             try:
-                conn = self.store._get_conn()
                 pattern = f"{cml_type}:{subject}%"
-                rows = conn.execute(
-                    "SELECT id, content, project FROM memories "
-                    "WHERE status='active' AND namespace=? AND project=? "
-                    "AND content LIKE ? LIMIT 5",
-                    (self.namespace, project, pattern),
-                ).fetchall()
+                rows = self.store.find_cml_subject_matches(
+                    self.namespace, project, pattern, limit=5)
                 for row in rows:
-                    mid = row["id"] if hasattr(row, "keys") else row[0]
+                    mid = row["id"]
                     if mid in candidates:
                         candidates[mid]["methods"].add("cml")
                     else:
-                        r_content = row["content"] if hasattr(row, "keys") else row[1]
-                        r_project = row["project"] if hasattr(row, "keys") else row[2]
                         candidates[mid] = {
-                            "id": mid, "content": r_content,
-                            "project": r_project, "methods": {"cml"},
+                            "id": mid, "content": row["content"],
+                            "project": row["project"], "methods": {"cml"},
                         }
             except Exception:
                 pass
@@ -1140,17 +1111,7 @@ class Mnemos:
         # only rows the retrieval logger wrote, so it is inert when
         # retrieval logging is off.
         if self.enable_retrieval_log:
-            try:
-                conn = self.store._get_conn()
-                conn.execute(
-                    "UPDATE retrieval_log SET useful = 1 "
-                    "WHERE memory_id = ? AND useful IS NULL "
-                    "AND retrieved_at >= datetime('now', 'localtime', '-24 hours')",
-                    (mid,),
-                )
-                conn.commit()
-            except Exception:
-                pass
+            self.store.mark_retrieval_useful(mid)
 
         return memory.to_dict()
 
@@ -1323,10 +1284,6 @@ class Mnemos:
         if not pattern:
             return {"error": "pattern is required", "matched": 0,
                     "affected": 0, "changes": [], "dry_run": dry_run}
-        if not hasattr(self.store, "_get_conn"):
-            return {"error": "bulk_rewrite only supported on SQLite-based stores",
-                    "matched": 0, "affected": 0, "changes": [],
-                    "dry_run": dry_run}
 
         import re
         regex = None
@@ -1337,35 +1294,19 @@ class Mnemos:
                 return {"error": f"invalid regex: {e}", "matched": 0,
                         "affected": 0, "changes": [], "dry_run": dry_run}
 
-        conn = self.store._get_conn()
-        where = "status = 'active' AND namespace = ?"
-        params: list = [self.namespace]
-        if project:
-            where += " AND project = ?"
-            params.append(project)
-        if tags:
-            # Word-boundary tag match: wrap both the stored tags CSV and the
-            # search pattern with commas so the LIKE query only matches the
-            # intended tag atom. Previous `LIKE '%foo%'` matched tags like
-            # 'unnamed' when user asked for 'name' - substring leak.
-            where += " AND (',' || tags || ',') LIKE ?"
-            params.append(f"%,{tags},%")
-
         try:
             from contextlib import nullcontext
             guard = _regex_time_limit() if use_regex else nullcontext()
             with guard:
+                content_pattern = None if use_regex else f"%{pattern}%"
+                rows = self.store.find_memories_by_content(
+                    self.namespace, project=project, tags=tags,
+                    content_pattern=content_pattern,
+                )
                 if use_regex:
-                    rows = conn.execute(
-                        f"SELECT id, content FROM memories WHERE {where}", params,
-                    ).fetchall()
                     matches = [(r["id"], r["content"]) for r in rows
                                if regex.search(r["content"] or "")]
                 else:
-                    rows = conn.execute(
-                        f"SELECT id, content FROM memories WHERE {where} AND content LIKE ?",
-                        params + [f"%{pattern}%"],
-                    ).fetchall()
                     matches = [(r["id"], r["content"]) for r in rows]
 
                 # Compute actual changes (filter out no-op rewrites where pattern
@@ -1480,24 +1421,8 @@ class Mnemos:
         marker so lines that got cut off read cleanly rather than dangling
         mid-sentence.
         """
-        if hasattr(self.store, "_get_conn"):
-            conn = self.store._get_conn()
-            where = "WHERE m.status = 'active' AND m.namespace = ?"
-            params = [self.namespace]
-            if project:
-                where += " AND m.project = ?"
-                params.append(project)
-            try:
-                rows = conn.execute(
-                    f"SELECT id, project, content, importance, type "
-                    f"FROM memories m {where} "
-                    f"ORDER BY importance DESC, last_accessed DESC LIMIT 30",
-                    params,
-                ).fetchall()
-            except Exception:
-                rows = []
-        else:
-            rows = []
+        rows = self.store.get_briefing_memories(
+            self.namespace, project=project, limit=30)
 
         lines = []
         used = 0
@@ -1513,34 +1438,12 @@ class Mnemos:
 
     def digest(self, days: int = 7, project: Optional[str] = None) -> list:
         """Recent memories from the last N days."""
-        if not hasattr(self.store, "_get_conn"):
-            return []
-        conn = self.store._get_conn()
-        where = "WHERE status = 'active' AND namespace = ?"
-        params = [self.namespace]
-        where += " AND julianday('now', 'localtime') - julianday(created_at) <= ?"
-        params.append(days)
-        if project:
-            where += " AND project = ?"
-            params.append(project)
-        rows = conn.execute(
-            f"SELECT id, project, content, created_at, importance "
-            f"FROM memories {where} ORDER BY created_at DESC LIMIT 100",
-            params,
-        ).fetchall()
-        return [dict(r) for r in rows]
+        return self.store.get_digest_memories(
+            self.namespace, days=days, project=project, limit=100)
 
     def map(self) -> dict:
         """Compact topic index: count by project/subcategory."""
-        if not hasattr(self.store, "_get_conn"):
-            return {}
-        conn = self.store._get_conn()
-        rows = conn.execute(
-            "SELECT project, subcategory, COUNT(*) as n "
-            "FROM memories WHERE status='active' AND namespace=? "
-            "GROUP BY project, subcategory ORDER BY project, n DESC",
-            (self.namespace,),
-        ).fetchall()
+        rows = self.store.get_project_map(self.namespace)
         result = {}
         for r in rows:
             project, sub, n = r["project"], r["subcategory"], r["n"]
@@ -1603,19 +1506,8 @@ class Mnemos:
         this command before it existed. Missing vectors here are exactly the
         rows embed_status reports as `missing`.
         """
-        if not hasattr(self.store, "_get_conn"):
-            return {"error": "embed-fill requires a SQLite-based store"}
-        conn = self.store._get_conn()
-        rows = conn.execute(
-            "SELECT m.id, m.project, m.content, m.tags, m.type, m.layer "
-            "FROM memories m WHERE m.status='active' AND m.namespace=? "
-            "AND NOT EXISTS (SELECT 1 FROM embed_meta em "
-            " WHERE em.source_db='memory' AND em.source_id=m.id) "
-            "ORDER BY m.id",
-            (self.namespace,),
-        ).fetchall()
-        if limit:
-            rows = rows[:limit]
+        rows = self.store.get_unembedded_memories(
+            self.namespace, limit=limit)
         filled = failed = 0
         for r in rows:
             if dry_run:
@@ -1636,55 +1528,7 @@ class Mnemos:
 
     def embed_status(self) -> dict:
         """Embedding coverage report."""
-        if not hasattr(self.store, "_get_conn"):
-            return {"error": "embed status only supported on SQLite-based stores"}
-        conn = self.store._get_conn()
-        active = conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE status='active' AND namespace=?",
-            (self.namespace,),
-        ).fetchone()[0]
-        embedded = conn.execute(
-            "SELECT COUNT(*) FROM embed_meta em "
-            "JOIN memories m ON m.id = em.source_id "
-            "WHERE em.source_db = 'memory' AND m.status='active' AND m.namespace=?",
-            (self.namespace,),
-        ).fetchone()[0]
-
-        # Staleness: a vector whose recorded embed-text hash no longer
-        # matches the memory's current canonical text (content updated but
-        # re-embedding failed). Rows with no recorded hash predate hash
-        # tracking and are reported as unverified rather than presumed
-        # fresh or stale.
-        stale = 0
-        unverified = 0
-        rows = conn.execute(
-            "SELECT m.project, m.content, m.tags, m.type, m.layer, em.text_hash "
-            "FROM embed_meta em JOIN memories m ON m.id = em.source_id "
-            "WHERE em.source_db = 'memory' AND m.status='active' AND m.namespace=?",
-            (self.namespace,),
-        ).fetchall()
-        for r in rows:
-            if not r["text_hash"]:
-                unverified += 1
-                continue
-            current = embed_text_hash(prep_memory_text(
-                r["project"], r["content"], r["tags"] or "",
-                mem_type=r["type"] or "", layer=r["layer"] or "",
-            ))
-            # Truncated legacy hashes are prefixes of the full sha256, so a
-            # prefix match verifies freshness without forcing a re-embed.
-            stored = r["text_hash"]
-            if current != stored and not current.startswith(stored):
-                stale += 1
-
-        return {
-            "active": active,
-            "embedded": embedded,
-            "missing": active - embedded,
-            "stale": stale,
-            "unverified": unverified,
-            "coverage": round(embedded / active, 4) if active else 0.0,
-        }
+        return self.store.get_embed_coverage(self.namespace)
 
     def doctor(self, migrate: bool = False) -> dict:
         """Health check + optional self-repair. Sanity-checks the store and
@@ -1701,161 +1545,7 @@ class Mnemos:
         Never drops data. Backup path is returned in the report so callers
         can roll back.
         """
-        if not hasattr(self.store, "_get_conn"):
-            return {"error": "doctor only supported on SQLite-based stores"}
-        conn = self.store._get_conn()
-        report = {
-            "namespace": self.namespace,
-            "checks": [],
-            "issues": [],
-            "migrations_applied": [],
-        }
-
-        # --- Integrity check (FIRST, before any read that assumes a sane btree) ---
-        # Catches page/btree corruption, e.g. from an unsafe file copy of a live
-        # WAL-mode DB. Without this, doctor reported "healthy" on a malformed DB
-        # and the damage only surfaced as a "database disk image is malformed"
-        # blow-up at search time. quick_check is much faster than the full
-        # integrity_check on a large corpus and still catches this class.
-        try:
-            ok, summary = _summarize_quick_check(
-                conn.execute("PRAGMA quick_check").fetchall()
-            )
-            if ok:
-                report["checks"].append("Integrity check passed (quick_check)")
-            else:
-                report["issues"].append(f"Integrity check FAILED: {summary}")
-        except Exception as e:
-            report["issues"].append(f"Integrity check error: {e}")
-
-        # --- Schema drift detection ---
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
-        required = {"id", "project", "content", "type", "layer", "subcategory",
-                    "valid_from", "valid_until", "namespace"}
-        missing_cols = required - cols
-        if missing_cols:
-            report["issues"].append(f"Missing columns in memories: {sorted(missing_cols)}")
-        else:
-            report["checks"].append("Schema is up to date (v10)")
-
-        # --- Empty-store detection (v10.23.0) ---
-        # "healthy" over 0 active memories is a vacuous green: in practice it
-        # means MNEMOS_DB points at the wrong file or MNEMOS_NAMESPACE does
-        # not match the data, and every downstream check passes on nothing
-        # (2026-07-05: exactly that helped a false all-clear survive). A
-        # brand-new store hits this once, which the wording allows for.
-        try:
-            active = conn.execute(
-                "SELECT COUNT(*) FROM memories WHERE status = 'active' "
-                "AND namespace = ?", (self.namespace,)).fetchone()[0]
-            if active > 0:
-                report["checks"].append(
-                    f"Store populated: {active} active memories in "
-                    f"namespace '{self.namespace}'")
-            else:
-                total = conn.execute(
-                    "SELECT COUNT(*) FROM memories").fetchone()[0]
-                if total == 0:
-                    report["issues"].append(
-                        "Store is empty: 0 memories in this database. "
-                        "Expected only for a brand-new store; otherwise "
-                        "MNEMOS_DB is probably pointing at the wrong file")
-                else:
-                    rows = conn.execute(
-                        "SELECT namespace, COUNT(*) AS n FROM memories "
-                        "GROUP BY namespace ORDER BY n DESC").fetchall()
-                    listing = ", ".join(f"'{r[0]}': {r[1]}" for r in rows)
-                    report["issues"].append(
-                        f"No active memories in namespace "
-                        f"'{self.namespace}' but the database holds "
-                        f"{total} memories ({listing}). Check "
-                        "MNEMOS_NAMESPACE if these should be visible here")
-        except Exception as e:
-            report["issues"].append(f"Empty-store check failed: {e}")
-
-        # Detect missing auxiliary tables that v10.2+ expects
-        existing_tables = {
-            r[0] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-        expected_aux = {"retrieval_log", "tool_usage", "consolidation_log", "nyx_state"}
-        missing_tables = expected_aux - existing_tables
-        if missing_tables:
-            report["issues"].append(f"Missing aux tables: {sorted(missing_tables)}")
-
-        # Backup before any migrations
-        if migrate and (missing_cols or missing_tables) and hasattr(self.store, "db_path"):
-            import time
-            src = self.store.db_path
-            ts = time.strftime("%Y%m%d-%H%M%S")
-            backup = f"{src}.bak-pre-doctor-migrate-{ts}"
-            try:
-                # WAL-safe snapshot, never a raw copy: copying a live WAL-mode
-                # .db without its -wal/-shm is exactly what corrupted prod.
-                self.store.backup(backup)
-                report["backup"] = backup
-            except Exception as e:
-                report["issues"].append(f"Backup failed; aborting migrations: {e}")
-                migrate = False  # bail out safely
-
-        if migrate and missing_cols:
-            # init_schema already knows how to backfill; invoking it is the
-            # cleanest migration path since it has the authoritative column
-            # defaults baked in.
-            try:
-                self.store.init_schema()
-                post_cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
-                backfilled = sorted(missing_cols & post_cols)
-                if backfilled:
-                    report["migrations_applied"].append(
-                        f"Backfilled columns: {backfilled}"
-                    )
-            except Exception as e:
-                report["issues"].append(f"Column migration failed: {e}")
-
-        if migrate and missing_tables:
-            try:
-                # init_schema also creates aux tables if absent
-                self.store.init_schema()
-                post_tables = {
-                    r[0] for r in conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table'"
-                    ).fetchall()
-                }
-                created = sorted(missing_tables & post_tables)
-                if created:
-                    report["migrations_applied"].append(
-                        f"Created aux tables: {created}"
-                    )
-            except Exception as e:
-                report["issues"].append(f"Table migration failed: {e}")
-
-        # --- FTS sanity ---
-        mem_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-        try:
-            fts_count = conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
-            if mem_count != fts_count:
-                report["issues"].append(
-                    f"FTS index out of sync: {mem_count} memories vs {fts_count} FTS rows"
-                )
-                if migrate:
-                    try:
-                        # Rebuild FTS from scratch (idempotent, cheap at <50K memories)
-                        conn.execute(
-                            "INSERT INTO memories_fts(memories_fts) VALUES('rebuild')"
-                        )
-                        conn.commit()
-                        new_count = conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
-                        report["migrations_applied"].append(
-                            f"Rebuilt FTS index ({new_count} rows)"
-                        )
-                    except Exception as e:
-                        report["issues"].append(f"FTS rebuild failed: {e}")
-            else:
-                report["checks"].append(f"FTS index synced ({fts_count} rows)")
-        except Exception as e:
-            report["issues"].append(f"FTS check failed: {e}")
+        report = self.store.health_check(self.namespace, migrate=migrate)
 
         # --- Embedding coverage ---
         # Guarded: embed_status queries embed_meta columns, and schema drift
@@ -1890,24 +1580,9 @@ class Mnemos:
         # embed-text FORMAT changed between versions, not row corruption,
         # and is reported as such.
         try:
-            rows = conn.execute(
-                "SELECT m.id, m.project, m.content, m.tags, m.type, m.layer, "
-                "e.text_hash FROM memories m JOIN embed_meta e "
-                "ON e.source_db='memory' AND e.source_id = m.id "
-                "WHERE m.status='active' AND m.namespace = ?",
-                (self.namespace,),
-            ).fetchall()
-            mismatched = []
-            checkable = 0
-            for r in rows:
-                if not r["text_hash"]:
-                    continue  # predates hash tracking
-                checkable += 1
-                expect = embed_text_hash(prep_memory_text(
-                    r["project"], r["content"] or "", r["tags"] or "",
-                    mem_type=r["type"] or "", layer=r["layer"] or ""))
-                if expect != r["text_hash"]:
-                    mismatched.append(r["id"])
+            coherence = self.store.get_coherence_mismatches(self.namespace)
+            checkable = coherence["checkable"]
+            mismatched = coherence["mismatched_ids"]
             if not mismatched:
                 report["checks"].append(
                     f"Content/vector coherence: {checkable} active memories verified")
@@ -1927,19 +1602,10 @@ class Mnemos:
                     f"{'...' if len(mismatched) > 10 else ''}): content was "
                     "changed without a re-embed")
                 if migrate:
-                    repaired = 0
-                    for mid in mismatched:
-                        r = conn.execute(
-                            "SELECT project, content, tags, type, layer "
-                            "FROM memories WHERE id = ?", (mid,)).fetchone()
-                        text = prep_memory_text(
-                            r["project"], r["content"] or "", r["tags"] or "",
-                            mem_type=r["type"] or "", layer=r["layer"] or "")
-                        vecs = embed([text], prefix="passage")
-                        if vecs and vecs[0]:
-                            self.store._store_embedding(
-                                mid, vecs[0], text_hash=embed_text_hash(text))
-                            repaired += 1
+                    repaired = self.store.reembed_mismatched(
+                        self.namespace, mismatched,
+                        embed_fn=embed, text_hash_fn=embed_text_hash,
+                        prep_fn=prep_memory_text)
                     report["migrations_applied"].append(
                         f"re-embedded {repaired}/{len(mismatched)} "
                         "hash-mismatched memories")
@@ -1953,13 +1619,10 @@ class Mnemos:
         # provenance tracking and are reported as a check, not an issue.
         try:
             from .constants import FASTEMBED_MODEL
-            rows = conn.execute(
-                "SELECT model, COUNT(*) AS n FROM embed_meta "
-                "WHERE source_db = 'memory' GROUP BY model"
-            ).fetchall()
-            foreign = [(r["model"], r["n"]) for r in rows
+            rows = self.store.get_vector_provenance()
+            foreign = [(r["model"], r["count"]) for r in rows
                        if r["model"] and r["model"] != FASTEMBED_MODEL]
-            untracked = sum(r["n"] for r in rows if not r["model"])
+            untracked = sum(r["count"] for r in rows if not r["model"])
             if foreign:
                 report["issues"].append(
                     "Mixed vector provenance: "
@@ -1986,141 +1649,9 @@ class Mnemos:
         # used to leave tier-2 rows behind, and consolidation used to archive
         # memories without moving their vectors into the tier-2 index.
         try:
-            from .storage.sqlite_store import _arch_join_col
-
-            # Timestamp dialect: detected from the table DDL itself, so the
-            # check is idempotent and needs no migration marker.
-            dialect_tables = []
-            for table in ("embed_meta", "embed_meta_arch"):
-                if table not in existing_tables:
-                    continue
-                ddl = conn.execute(
-                    "SELECT sql FROM sqlite_master WHERE name = ?", (table,)
-                ).fetchone()
-                if ddl and ddl[0] and "localtime" not in ddl[0]:
-                    dialect_tables.append(table)
-
-            arch_orphans = []
-            if "embed_meta_arch" in existing_tables:
-                arch_orphans = conn.execute(
-                    "SELECT e.id, e.source_id FROM embed_meta_arch e "
-                    "LEFT JOIN memories m ON m.id = e.source_id "
-                    "WHERE m.id IS NULL"
-                ).fetchall()
-
-            # Backup before these migrations too (the early backup only
-            # triggers on column/table drift).
-            if migrate and (dialect_tables or arch_orphans) \
-                    and "backup" not in report and hasattr(self.store, "db_path"):
-                import time as _time
-                backup = (f"{self.store.db_path}"
-                          f".bak-pre-doctor-migrate-{_time.strftime('%Y%m%d-%H%M%S')}")
-                try:
-                    self.store.backup(backup)
-                    report["backup"] = backup
-                except Exception as e:
-                    report["issues"].append(
-                        f"Backup failed; skipping archive-lifecycle migrations: {e}")
-                    dialect_tables, arch_orphans = [], []
-
-            if dialect_tables and migrate:
-                for table in dialect_tables:
-                    conn.execute(f"ALTER TABLE {table} RENAME TO {table}_utc_old")
-                    conn.execute(f"""
-                        CREATE TABLE {table} (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            source_db TEXT NOT NULL,
-                            source_id INTEGER NOT NULL,
-                            text_hash TEXT,
-                            model TEXT,
-                            embedded_at TEXT DEFAULT (datetime('now', 'localtime')),
-                            UNIQUE(source_db, source_id)
-                        )""")
-                    conn.execute(
-                        f"INSERT INTO {table} (id, source_db, source_id, text_hash, model, embedded_at) "
-                        f"SELECT id, source_db, source_id, text_hash, model, "
-                        f"CASE WHEN embedded_at IS NULL THEN NULL "
-                        f"ELSE datetime(embedded_at, 'localtime') END "
-                        f"FROM {table}_utc_old")
-                    conn.execute(f"DROP TABLE {table}_utc_old")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_meta_source "
-                             "ON embed_meta(source_db, source_id)")
-                conn.commit()
-                report["migrations_applied"].append(
-                    f"Converted embedded_at to localtime and rebuilt with "
-                    f"localtime default: {dialect_tables}")
-            elif dialect_tables:
-                report["issues"].append(
-                    f"embedded_at stored in UTC dialect in {dialect_tables} "
-                    "while the memories table uses localtime; timestamps "
-                    "cross-compare wrong by the UTC offset. Run doctor "
-                    "--migrate to convert")
-
-            if arch_orphans and migrate:
-                arch_col = _arch_join_col(conn)
-                for row in arch_orphans:
-                    conn.execute(
-                        f"DELETE FROM embed_vec_arch WHERE {arch_col} = ?",
-                        (row[0],))
-                    conn.execute(
-                        "DELETE FROM embed_meta_arch WHERE id = ?", (row[0],))
-                conn.commit()
-                report["migrations_applied"].append(
-                    f"Removed {len(arch_orphans)} orphan tier-2 embedding rows "
-                    "(memories hard-deleted before v10.24.0 left them behind)")
-            elif arch_orphans:
-                report["issues"].append(
-                    f"{len(arch_orphans)} orphan arch embedding rows whose "
-                    "memory no longer exists (pre-v10.24 hard-delete leak). "
-                    "Run doctor --migrate to clean")
-
-            if "embed_meta_arch" in existing_tables:
-                gaps = conn.execute(
-                    "SELECT COUNT(*) FROM memories m "
-                    "WHERE m.status = 'archived' AND m.namespace = ? "
-                    "AND NOT EXISTS (SELECT 1 FROM embed_meta_arch em "
-                    "WHERE em.source_db = 'memory' AND em.source_id = m.id)",
-                    (self.namespace,)).fetchone()[0]
-                legacy = conn.execute(
-                    "SELECT COUNT(*) FROM memories m "
-                    "JOIN embed_meta_arch em ON em.source_db = 'memory' "
-                    "AND em.source_id = m.id "
-                    "WHERE m.status = 'archived' AND m.namespace = ? "
-                    "AND (em.text_hash IS NULL OR length(em.text_hash) < 64)",
-                    (self.namespace,)).fetchone()[0]
-                if gaps or legacy:
-                    # Never auto-embedded here, same policy as active-side
-                    # coverage: embedding cost/time is caller-controlled.
-                    report["issues"].append(
-                        f"Tier-2 archive index incomplete: {gaps} archived "
-                        f"memories without a vector, {legacy} with a legacy "
-                        "pre-canonical hash. Run `mnemos reindex-archived`")
-                else:
-                    arch_n = conn.execute(
-                        "SELECT COUNT(*) FROM embed_meta_arch "
-                        "WHERE source_db = 'memory'").fetchone()[0]
-                    report["checks"].append(
-                        f"Tier-2 archive index: complete ({arch_n} vectors)")
+            self.store.check_archive_lifecycle(self.namespace, migrate, report)
         except Exception as e:
             report["issues"].append(f"Archive-lifecycle check failed: {e}")
-
-        # Re-check issues post-migration so callers see the clean state
-        if migrate and report["migrations_applied"]:
-            # Filter out issues that were resolved
-            post_cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
-            post_tables = {
-                r[0] for r in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-            resolved_issues = []
-            for issue in report["issues"]:
-                if "Missing columns" in issue and not (required - post_cols):
-                    continue  # resolved
-                if "Missing aux tables" in issue and not (expected_aux - post_tables):
-                    continue
-                resolved_issues.append(issue)
-            report["issues"] = resolved_issues
 
         report["status"] = "healthy" if not report["issues"] else "issues_detected"
         return report

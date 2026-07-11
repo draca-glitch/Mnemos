@@ -1259,6 +1259,608 @@ class SQLiteStore(MnemosStore):
             return {}
         return {r["id"]: r["snip"] for r in rows if r["snip"]}
 
+    # --- Oversized memory remediation (v10.8.0) ---
+
+    def find_oversized_memories(
+        self,
+        namespace: str,
+        min_size: int = 4000,
+        max_size: Optional[int] = None,
+        include_archived: bool = False,
+        limit: Optional[int] = None,
+    ) -> list:
+        import re as _re
+        conn = self._get_conn()
+        clause = "length(content) > ?"
+        params = [min_size]
+        if max_size:
+            clause += " AND length(content) <= ?"
+            params.append(max_size)
+        params.append(namespace)
+        status_clause = (
+            "status IN ('active','archived')" if include_archived
+            else "status='active'"
+        )
+        rows = conn.execute(
+            f"SELECT id FROM memories WHERE {status_clause} "
+            f"AND consolidation_lock=0 AND {clause} AND namespace=? "
+            f"ORDER BY length(content) DESC",
+            params,
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        done = set()
+        for r in conn.execute(
+            "SELECT tags FROM memories "
+            "WHERE tags LIKE '%split-from:#%' AND namespace=?",
+            (namespace,),
+        ):
+            for gid in _re.findall(r"split-from:#(\d+)", r["tags"] or ""):
+                done.add(int(gid))
+        ids = [i for i in ids if i not in done]
+        if limit:
+            ids = ids[:limit]
+        return ids
+
+    # --- CML subject dedup ---
+
+    def find_cml_subject_matches(
+        self,
+        namespace: str,
+        project: str,
+        pattern: str,
+        limit: int = 5,
+    ) -> list:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT id, content, project FROM memories "
+            "WHERE status='active' AND namespace=? AND project=? "
+            "AND content LIKE ? LIMIT ?",
+            (namespace, project, pattern, limit),
+        ).fetchall()
+        return [
+            {"id": r["id"], "content": r["content"], "project": r["project"]}
+            for r in rows
+        ]
+
+    # --- Retrieval log useful-loop (v10.17.0) ---
+
+    def mark_retrieval_useful(self, memory_id: int) -> None:
+        try:
+            conn = self._get_conn()
+            conn.execute(
+                "UPDATE retrieval_log SET useful = 1 "
+                "WHERE memory_id = ? AND useful IS NULL "
+                "AND retrieved_at >= datetime('now', 'localtime', '-24 hours')",
+                (memory_id,),
+            )
+            conn.commit()
+        except Exception:
+            pass
+
+    # --- Content-based memory search (used by bulk_rewrite) ---
+
+    def find_memories_by_content(
+        self,
+        namespace: str,
+        project: Optional[str] = None,
+        tags: Optional[str] = None,
+        content_pattern: Optional[str] = None,
+    ) -> list:
+        conn = self._get_conn()
+        where = "status = 'active' AND namespace = ?"
+        params: list = [namespace]
+        if project:
+            where += " AND project = ?"
+            params.append(project)
+        if tags:
+            where += " AND (',' || tags || ',') LIKE ?"
+            params.append(f"%,{tags},%")
+        if content_pattern:
+            where += " AND content LIKE ?"
+            params.append(content_pattern)
+        rows = conn.execute(
+            f"SELECT id, content FROM memories WHERE {where}", params,
+        ).fetchall()
+        return [{"id": r["id"], "content": r["content"]} for r in rows]
+
+    # --- Briefing ---
+
+    def get_briefing_memories(
+        self,
+        namespace: str,
+        project: Optional[str] = None,
+        limit: int = 30,
+    ) -> list:
+        conn = self._get_conn()
+        where = "WHERE m.status = 'active' AND m.namespace = ?"
+        params = [namespace]
+        if project:
+            where += " AND m.project = ?"
+            params.append(project)
+        try:
+            rows = conn.execute(
+                f"SELECT id, project, content, importance, type "
+                f"FROM memories m {where} "
+                f"ORDER BY importance DESC, last_accessed DESC LIMIT ?",
+                params + [limit],
+            ).fetchall()
+        except Exception:
+            return []
+        return [
+            {"id": r["id"], "project": r["project"], "content": r["content"],
+             "importance": r["importance"], "type": r["type"]}
+            for r in rows
+        ]
+
+    # --- Digest ---
+
+    def get_digest_memories(
+        self,
+        namespace: str,
+        days: int = 7,
+        project: Optional[str] = None,
+        limit: int = 100,
+    ) -> list:
+        conn = self._get_conn()
+        where = (
+            "WHERE status = 'active' AND namespace = ? "
+            "AND julianday('now', 'localtime') - julianday(created_at) <= ?"
+        )
+        params = [namespace, days]
+        if project:
+            where += " AND project = ?"
+            params.append(project)
+        rows = conn.execute(
+            f"SELECT id, project, content, created_at, importance "
+            f"FROM memories {where} ORDER BY created_at DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # --- Project map ---
+
+    def get_project_map(self, namespace: str) -> list:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT project, subcategory, COUNT(*) as n "
+            "FROM memories WHERE status='active' AND namespace=? "
+            "GROUP BY project, subcategory ORDER BY project, n DESC",
+            (namespace,),
+        ).fetchall()
+        return [
+            {"project": r["project"], "subcategory": r["subcategory"], "n": r["n"]}
+            for r in rows
+        ]
+
+    # --- Embedding backfill (used by embed_fill) ---
+
+    def get_unembedded_memories(
+        self,
+        namespace: str,
+        limit: Optional[int] = None,
+    ) -> list:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT m.id, m.project, m.content, m.tags, m.type, m.layer "
+            "FROM memories m WHERE m.status='active' AND m.namespace=? "
+            "AND NOT EXISTS (SELECT 1 FROM embed_meta em "
+            " WHERE em.source_db='memory' AND em.source_id=m.id) "
+            "ORDER BY m.id",
+            (namespace,),
+        ).fetchall()
+        if limit:
+            rows = rows[:limit]
+        return [
+            {"id": r["id"], "project": r["project"], "content": r["content"],
+             "tags": r["tags"], "type": r["type"], "layer": r["layer"]}
+            for r in rows
+        ]
+
+    # --- Embedding coverage (used by embed_status) ---
+
+    def get_embed_coverage(self, namespace: str) -> dict:
+        from ..embed import text_hash as embed_text_hash, prep_memory_text
+        conn = self._get_conn()
+        active = conn.execute(
+            "SELECT COUNT(*) FROM memories "
+            "WHERE status='active' AND namespace=?",
+            (namespace,),
+        ).fetchone()[0]
+        embedded = conn.execute(
+            "SELECT COUNT(*) FROM embed_meta em "
+            "JOIN memories m ON m.id = em.source_id "
+            "WHERE em.source_db = 'memory' AND m.status='active' "
+            "AND m.namespace=?",
+            (namespace,),
+        ).fetchone()[0]
+        stale = 0
+        unverified = 0
+        rows = conn.execute(
+            "SELECT m.project, m.content, m.tags, m.type, m.layer, "
+            "em.text_hash FROM embed_meta em "
+            "JOIN memories m ON m.id = em.source_id "
+            "WHERE em.source_db = 'memory' AND m.status='active' "
+            "AND m.namespace=?",
+            (namespace,),
+        ).fetchall()
+        for r in rows:
+            if not r["text_hash"]:
+                unverified += 1
+                continue
+            current = embed_text_hash(prep_memory_text(
+                r["project"], r["content"], r["tags"] or "",
+                mem_type=r["type"] or "", layer=r["layer"] or "",
+            ))
+            stored = r["text_hash"]
+            if current != stored and not current.startswith(stored):
+                stale += 1
+        return {
+            "active": active,
+            "embedded": embedded,
+            "missing": active - embedded,
+            "stale": stale,
+            "unverified": unverified,
+            "coverage": round(embedded / active, 4) if active else 0.0,
+        }
+
+    # --- Health check (used by doctor) ---
+
+    def health_check(self, namespace: str, migrate: bool = False) -> dict:
+        conn = self._get_conn()
+        report = {
+            "namespace": namespace,
+            "checks": [],
+            "issues": [],
+            "migrations_applied": [],
+        }
+
+        # --- Integrity check ---
+        try:
+            from ..core import _summarize_quick_check
+            ok, summary = _summarize_quick_check(
+                conn.execute("PRAGMA quick_check").fetchall()
+            )
+            if ok:
+                report["checks"].append("Integrity check passed (quick_check)")
+            else:
+                report["issues"].append(f"Integrity check FAILED: {summary}")
+        except Exception as e:
+            report["issues"].append(f"Integrity check error: {e}")
+
+        # --- Schema drift detection ---
+        cols = {r[1] for r in conn.execute(
+            "PRAGMA table_info(memories)").fetchall()}
+        required = {"id", "project", "content", "type", "layer",
+                    "subcategory", "valid_from", "valid_until", "namespace"}
+        missing_cols = required - cols
+        if missing_cols:
+            report["issues"].append(
+                f"Missing columns in memories: {sorted(missing_cols)}")
+        else:
+            report["checks"].append("Schema is up to date (v10)")
+
+        # --- Empty-store detection (v10.23.0) ---
+        try:
+            active = conn.execute(
+                "SELECT COUNT(*) FROM memories "
+                "WHERE status = 'active' AND namespace = ?",
+                (namespace,)).fetchone()[0]
+            if active > 0:
+                report["checks"].append(
+                    f"Store populated: {active} active memories "
+                    f"in namespace '{namespace}'")
+            else:
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM memories").fetchone()[0]
+                if total == 0:
+                    report["issues"].append(
+                        "Store is empty: 0 memories in this database. "
+                        "Expected only for a brand-new store; otherwise "
+                        "MNEMOS_DB is probably pointing at the wrong file")
+                else:
+                    rows = conn.execute(
+                        "SELECT namespace, COUNT(*) AS n FROM memories "
+                        "GROUP BY namespace ORDER BY n DESC").fetchall()
+                    listing = ", ".join(
+                        f"'{r[0]}': {r[1]}" for r in rows)
+                    report["issues"].append(
+                        f"No active memories in namespace "
+                        f"'{namespace}' but the database holds "
+                        f"{total} memories ({listing}). Check "
+                        "MNEMOS_NAMESPACE if these should be visible here")
+        except Exception as e:
+            report["issues"].append(f"Empty-store check failed: {e}")
+
+        # --- Missing aux tables ---
+        existing_tables = {
+            r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        expected_aux = {"retrieval_log", "tool_usage",
+                        "consolidation_log", "nyx_state"}
+        missing_tables = expected_aux - existing_tables
+        if missing_tables:
+            report["issues"].append(
+                f"Missing aux tables: {sorted(missing_tables)}")
+
+        # --- Backup before migrations ---
+        if migrate and (missing_cols or missing_tables) and \
+                hasattr(self, "db_path"):
+            import time
+            src = self.db_path
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            backup = f"{src}.bak-pre-doctor-migrate-{ts}"
+            try:
+                self.backup(backup)
+                report["backup"] = backup
+            except Exception as e:
+                report["issues"].append(
+                    f"Backup failed; aborting migrations: {e}")
+                migrate = False
+
+        # --- Column migration ---
+        if migrate and missing_cols:
+            try:
+                self.init_schema()
+                post_cols = {r[1] for r in conn.execute(
+                    "PRAGMA table_info(memories)").fetchall()}
+                backfilled = sorted(missing_cols & post_cols)
+                if backfilled:
+                    report["migrations_applied"].append(
+                        f"Backfilled columns: {backfilled}")
+            except Exception as e:
+                report["issues"].append(f"Column migration failed: {e}")
+
+        # --- Table migration ---
+        if migrate and missing_tables:
+            try:
+                self.init_schema()
+                post_tables = {
+                    r[0] for r in conn.execute(
+                        "SELECT name FROM sqlite_master "
+                        "WHERE type='table'").fetchall()
+                }
+                created = sorted(missing_tables & post_tables)
+                if created:
+                    report["migrations_applied"].append(
+                        f"Created aux tables: {created}")
+            except Exception as e:
+                report["issues"].append(f"Table migration failed: {e}")
+
+        # --- FTS sanity ---
+        mem_count = conn.execute(
+            "SELECT COUNT(*) FROM memories").fetchone()[0]
+        try:
+            fts_count = conn.execute(
+                "SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+            if mem_count != fts_count:
+                report["issues"].append(
+                    f"FTS index out of sync: {mem_count} memories "
+                    f"vs {fts_count} FTS rows")
+                if migrate:
+                    try:
+                        conn.execute(
+                            "INSERT INTO memories_fts(memories_fts) "
+                            "VALUES('rebuild')")
+                        conn.commit()
+                        new_count = conn.execute(
+                            "SELECT COUNT(*) FROM memories_fts"
+                        ).fetchone()[0]
+                        report["migrations_applied"].append(
+                            f"Rebuilt FTS index ({new_count} rows)")
+                    except Exception as e:
+                        report["issues"].append(f"FTS rebuild failed: {e}")
+            else:
+                report["checks"].append(f"FTS index synced ({fts_count} rows)")
+        except Exception as e:
+            report["issues"].append(f"FTS check failed: {e}")
+
+        # --- Re-check issues post-migration ---
+        if migrate and report["migrations_applied"]:
+            post_cols = {r[1] for r in conn.execute(
+                "PRAGMA table_info(memories)").fetchall()}
+            post_tables = {
+                r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table'").fetchall()
+            }
+            resolved = []
+            for issue in report["issues"]:
+                if "Missing columns" in issue and not (required - post_cols):
+                    continue
+                if "Missing aux tables" in issue and \
+                        not (expected_aux - post_tables):
+                    continue
+                resolved.append(issue)
+            report["issues"] = resolved
+
+        return report
+
+    # --- Content/vector coherence (v10.19.0) ---
+
+    def get_coherence_mismatches(self, namespace: str) -> dict:
+        from ..embed import text_hash as embed_text_hash, prep_memory_text
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT m.id, m.project, m.content, m.tags, m.type, m.layer, "
+            "e.text_hash FROM memories m JOIN embed_meta e "
+            "ON e.source_db='memory' AND e.source_id = m.id "
+            "WHERE m.status='active' AND m.namespace = ?",
+            (namespace,),
+        ).fetchall()
+        mismatched = []
+        checkable = 0
+        for r in rows:
+            if not r["text_hash"]:
+                continue
+            checkable += 1
+            expect = embed_text_hash(prep_memory_text(
+                r["project"], r["content"] or "", r["tags"] or "",
+                mem_type=r["type"] or "", layer=r["layer"] or ""))
+            if expect != r["text_hash"]:
+                mismatched.append(r["id"])
+        return {"checkable": checkable, "mismatched_ids": mismatched}
+
+    def reembed_mismatched(self, namespace: str, mismatched_ids: list,
+                           embed_fn, text_hash_fn, prep_fn) -> int:
+        conn = self._get_conn()
+        repaired = 0
+        for mid in mismatched_ids:
+            r = conn.execute(
+                "SELECT project, content, tags, type, layer "
+                "FROM memories WHERE id = ?", (mid,)).fetchone()
+            text = prep_fn(
+                r["project"], r["content"] or "", r["tags"] or "",
+                mem_type=r["type"] or "", layer=r["layer"] or "")
+            vecs = embed_fn([text], prefix="passage")
+            if vecs and vecs[0]:
+                self._store_embedding(
+                    mid, vecs[0], text_hash=text_hash_fn(text))
+                repaired += 1
+        return repaired
+
+    # --- Vector provenance ---
+
+    def get_vector_provenance(self) -> list:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT model, COUNT(*) AS n FROM embed_meta "
+            "WHERE source_db = 'memory' GROUP BY model"
+        ).fetchall()
+        return [{"model": r["model"], "count": r["n"]} for r in rows]
+
+    # --- Archive-side embedding lifecycle (v10.24.0) ---
+
+    def check_archive_lifecycle(self, namespace: str, migrate: bool,
+                                report: dict) -> None:
+        """Check and optionally migrate archive-side embedding drift.
+
+        Detects: UTC-dialect embed_meta tables, orphan tier-2 rows from
+        pre-v10.24 hard deletes, and incomplete tier-2 archive index.
+        Mutates `report` in place.
+        """
+        conn = self._get_conn()
+        existing_tables = {
+            r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+
+        # Timestamp dialect: detected from the table DDL itself, so the
+        # check is idempotent and needs no migration marker.
+        dialect_tables = []
+        for table in ("embed_meta", "embed_meta_arch"):
+            if table not in existing_tables:
+                continue
+            ddl = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = ?", (table,)
+            ).fetchone()
+            if ddl and ddl[0] and "localtime" not in ddl[0]:
+                dialect_tables.append(table)
+
+        arch_orphans = []
+        if "embed_meta_arch" in existing_tables:
+            arch_orphans = conn.execute(
+                "SELECT e.id, e.source_id FROM embed_meta_arch e "
+                "LEFT JOIN memories m ON m.id = e.source_id "
+                "WHERE m.id IS NULL"
+            ).fetchall()
+
+        # Backup before these migrations too (the early backup only
+        # triggers on column/table drift).
+        if migrate and (dialect_tables or arch_orphans) \
+                and "backup" not in report and hasattr(self, "db_path"):
+            import time as _time
+            backup = (f"{self.db_path}"
+                      f".bak-pre-doctor-migrate-{_time.strftime('%Y%m%d-%H%M%S')}")
+            try:
+                self.backup(backup)
+                report["backup"] = backup
+            except Exception as e:
+                report["issues"].append(
+                    f"Backup failed; skipping archive-lifecycle migrations: {e}")
+                dialect_tables, arch_orphans = [], []
+
+        if dialect_tables and migrate:
+            for table in dialect_tables:
+                conn.execute(f"ALTER TABLE {table} RENAME TO {table}_utc_old")
+                conn.execute(f"""
+                    CREATE TABLE {table} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source_db TEXT NOT NULL,
+                        source_id INTEGER NOT NULL,
+                        text_hash TEXT,
+                        model TEXT,
+                        embedded_at TEXT DEFAULT (datetime('now', 'localtime')),
+                        UNIQUE(source_db, source_id)
+                    )""")
+                conn.execute(
+                    f"INSERT INTO {table} (id, source_db, source_id, text_hash, model, embedded_at) "
+                    f"SELECT id, source_db, source_id, text_hash, model, "
+                    f"CASE WHEN embedded_at IS NULL THEN NULL "
+                    f"ELSE datetime(embedded_at, 'localtime') END "
+                    f"FROM {table}_utc_old")
+                conn.execute(f"DROP TABLE {table}_utc_old")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_meta_source "
+                         "ON embed_meta(source_db, source_id)")
+            conn.commit()
+            report["migrations_applied"].append(
+                f"Converted embedded_at to localtime and rebuilt with "
+                f"localtime default: {dialect_tables}")
+        elif dialect_tables:
+            report["issues"].append(
+                f"embedded_at stored in UTC dialect in {dialect_tables} "
+                "while the memories table uses localtime; timestamps "
+                "cross-compare wrong by the UTC offset. Run doctor "
+                "--migrate to convert")
+
+        if arch_orphans and migrate:
+            arch_col = _arch_join_col(conn)
+            for row in arch_orphans:
+                conn.execute(
+                    f"DELETE FROM embed_vec_arch WHERE {arch_col} = ?",
+                    (row[0],))
+                conn.execute(
+                    "DELETE FROM embed_meta_arch WHERE id = ?", (row[0],))
+            conn.commit()
+            report["migrations_applied"].append(
+                f"Removed {len(arch_orphans)} orphan tier-2 embedding rows "
+                "(memories hard-deleted before v10.24.0 left them behind)")
+        elif arch_orphans:
+            report["issues"].append(
+                f"{len(arch_orphans)} orphan arch embedding rows whose "
+                "memory no longer exists (pre-v10.24 hard-delete leak). "
+                "Run doctor --migrate to clean")
+
+        if "embed_meta_arch" in existing_tables:
+            gaps = conn.execute(
+                "SELECT COUNT(*) FROM memories m "
+                "WHERE m.status = 'archived' AND m.namespace = ? "
+                "AND NOT EXISTS (SELECT 1 FROM embed_meta_arch em "
+                "WHERE em.source_db = 'memory' AND em.source_id = m.id)",
+                (namespace,)).fetchone()[0]
+            legacy = conn.execute(
+                "SELECT COUNT(*) FROM memories m "
+                "JOIN embed_meta_arch em ON em.source_db = 'memory' "
+                "AND em.source_id = m.id "
+                "WHERE m.status = 'archived' AND m.namespace = ? "
+                "AND (em.text_hash IS NULL OR length(em.text_hash) < 64)",
+                (namespace,)).fetchone()[0]
+            if gaps or legacy:
+                # Never auto-embedded here, same policy as active-side
+                # coverage: embedding cost/time is caller-controlled.
+                report["issues"].append(
+                    f"Tier-2 archive index incomplete: {gaps} archived "
+                    f"memories without a vector, {legacy} with a legacy "
+                    "pre-canonical hash. Run `mnemos reindex-archived`")
+            else:
+                arch_n = conn.execute(
+                    "SELECT COUNT(*) FROM embed_meta_arch "
+                    "WHERE source_db = 'memory'").fetchone()[0]
+                report["checks"].append(
+                    f"Tier-2 archive index: complete ({arch_n} vectors)")
+
     # --- Helpers ---
 
     @staticmethod

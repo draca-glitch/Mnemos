@@ -280,3 +280,197 @@ class MnemosStore(ABC):
         backend writes to the `consolidation_log` table.
         """
         return None
+
+    # --- Oversized memory remediation (v10.8.0, used by remediate_oversized) ---
+
+    def find_oversized_memories(
+        self,
+        namespace: str,
+        min_size: int = 4000,
+        max_size: Optional[int] = None,
+        include_archived: bool = False,
+        limit: Optional[int] = None,
+    ) -> list:
+        """Find memories with content longer than min_size.
+
+        Returns list of memory IDs, ordered by content length descending.
+        Excludes memories with consolidation_lock=1 and memories that already
+        have split children (tags containing 'split-from:#'). Default
+        implementation returns an empty list; backends that support content
+        length queries should override.
+        """
+        return []
+
+    # --- CML subject dedup (used by _unified_dedup CML tier) ---
+
+    def find_cml_subject_matches(
+        self,
+        namespace: str,
+        project: str,
+        pattern: str,
+        limit: int = 5,
+    ) -> list:
+        """Find memories whose content starts with a CML subject pattern.
+
+        pattern is a LIKE pattern (e.g. 'D:foo%'). Returns list of
+        dicts with keys: id, content, project. Default implementation
+        returns an empty list.
+        """
+        return []
+
+    # --- Retrieval log useful-loop (v10.17.0, used by get()) ---
+
+    def mark_retrieval_useful(self, memory_id: int) -> None:
+        """Mark recent retrieval_log entries for a memory as useful.
+
+        Called when a memory is accessed via get() shortly after being
+        returned by a search. No-op by default; backends with retrieval
+        logging override.
+        """
+        return None
+
+    # --- Content-based memory search (used by bulk_rewrite) ---
+
+    def find_memories_by_content(
+        self,
+        namespace: str,
+        project: Optional[str] = None,
+        tags: Optional[str] = None,
+        content_pattern: Optional[str] = None,
+    ) -> list:
+        """Find active memories matching content/tags/project filters.
+
+        content_pattern is a raw LIKE pattern (caller provides wildcards),
+        or None for no content filter. Returns list of dicts with keys:
+        id, content. Default implementation returns an empty list.
+        """
+        return []
+
+    # --- Briefing (used by briefing()) ---
+
+    def get_briefing_memories(
+        self,
+        namespace: str,
+        project: Optional[str] = None,
+        limit: int = 30,
+    ) -> list:
+        """Return top memories by importance + recency for briefing.
+
+        Returns list of dicts with keys: id, project, content, importance,
+        type. Default implementation returns an empty list.
+        """
+        return []
+
+    # --- Digest (used by digest()) ---
+
+    def get_digest_memories(
+        self,
+        namespace: str,
+        days: int = 7,
+        project: Optional[str] = None,
+        limit: int = 100,
+    ) -> list:
+        """Return recent memories from the last N days.
+
+        Returns list of dicts with keys: id, project, content, created_at,
+        importance. Default implementation returns an empty list.
+        """
+        return []
+
+    # --- Project map (used by map()) ---
+
+    def get_project_map(self, namespace: str) -> list:
+        """Return project/subcategory counts for active memories.
+
+        Returns list of dicts with keys: project, subcategory, n.
+        Default implementation returns an empty list.
+        """
+        return []
+
+    # --- Embedding backfill (used by embed_fill()) ---
+
+    def get_unembedded_memories(
+        self,
+        namespace: str,
+        limit: Optional[int] = None,
+    ) -> list:
+        """Return active memories that have no embedding vector.
+
+        Returns list of dicts with keys: id, project, content, tags, type,
+        layer. Default implementation returns an empty list.
+        """
+        return []
+
+    # --- Embedding coverage (used by embed_status()) ---
+
+    def get_embed_coverage(self, namespace: str) -> dict:
+        """Return embedding coverage statistics.
+
+        Returns dict with keys: active, embedded, missing, stale, unverified,
+        coverage. Default implementation returns zeros.
+        """
+        return {
+            "active": 0, "embedded": 0, "missing": 0,
+            "stale": 0, "unverified": 0, "coverage": 0.0,
+        }
+
+    # --- Health check (used by doctor()) ---
+
+    def health_check(self, namespace: str, migrate: bool = False) -> dict:
+        """Run backend-specific health checks and optional migrations.
+
+        Returns dict with keys: checks (list of str), issues (list of str),
+        migrations_applied (list of str). The core layer adds its own
+        checks (coherence, provenance) on top of this. Default
+        implementation returns an empty report.
+        """
+        return {"checks": [], "issues": [], "migrations_applied": []}
+
+    # --- Content/vector coherence (v10.19.0, used by doctor()) ---
+
+    def get_coherence_mismatches(self, namespace: str) -> dict:
+        """Check that stored embeddings match current memory content.
+
+        Compares each active memory's embed-text hash against the hash
+        recorded when its vector was stored. Returns dict with keys:
+        checkable (int), mismatched_ids (list of int). Default
+        implementation returns empty results.
+        """
+        return {"checkable": 0, "mismatched_ids": []}
+
+    def reembed_mismatched(self, namespace: str, mismatched_ids: list,
+                           embed_fn, text_hash_fn, prep_fn) -> int:
+        """Re-embed memories whose content no longer matches their vector.
+
+        Called by doctor --migrate. Returns count of successfully re-embedded
+        memories. Default implementation is a no-op returning 0.
+        """
+        return 0
+
+    # --- Vector provenance (used by doctor()) ---
+
+    def get_vector_provenance(self) -> list:
+        """Return vector model provenance statistics.
+
+        Returns list of dicts with keys: model, count. Rows with model=None
+        predate provenance tracking. Default implementation returns an
+        empty list.
+        """
+        return []
+
+    # --- Archive-side embedding lifecycle (v10.24.0, used by doctor()) ---
+
+    def check_archive_lifecycle(self, namespace: str, migrate: bool,
+                                report: dict) -> None:
+        """Check archive-side embedding lifecycle (v10.24.0).
+
+        Detects and optionally migrates three archive-side drifts:
+          - embed_meta tables with UTC embedded_at default (pre-localtime DDL)
+          - orphan tier-2 embedding rows (hard deletes before v10.24.0)
+          - incomplete tier-2 archive index (gaps and legacy hashes)
+
+        Mutates `report` in place: appends to report["issues"],
+        report["checks"], report["migrations_applied"], and may set
+        report["backup"]. Default implementation is a no-op.
+        """
+        pass
