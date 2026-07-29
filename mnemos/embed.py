@@ -7,8 +7,10 @@ between document passages and search queries; we handle this transparently.
 """
 
 import hashlib
+import sys
 import threading
 import time
+from pathlib import Path
 
 from .constants import (
     FASTEMBED_MODEL, FASTEMBED_CACHE, FASTEMBED_DIMS, DISABLE_MEM_ARENA,
@@ -19,12 +21,64 @@ _instance = None
 _last_used = 0.0
 _lock = threading.Lock()
 
+# Files younger than this are assumed to belong to an active download and
+# are left alone. 1 hour is conservative: a 2.2G model download finishes in
+# minutes on any reasonable connection, and concurrent mnemos processes
+# (MCP server + CLI + consolidation cron) can overlap safely.
+_INCOMPLETE_STALE_SECONDS = 3600
+
+
+def _clean_broken_cache():
+    """Remove orphaned download artifacts that prevent model loading.
+
+    huggingface_hub leaves ``.incomplete`` temp files when a download is
+    interrupted and never garbage-collects them. A failed initial download
+    can also leave ``refs/main`` empty (0 bytes), which causes
+    ``snapshot_download(local_files_only=True)`` to return the ``snapshots/``
+    parent dir instead of the hash subdir — onnxruntime then fails with
+    NoSuchFile because ``snapshots/model.onnx`` doesn't exist. Both
+    conditions block the model from ever loading and compound with each
+    retry: every failed attempt adds another dead partial, filling the disk
+    and making the next download fail even sooner.
+
+    Safe with concurrent downloads: only ``.incomplete`` files older than
+    ``_INCOMPLETE_STALE_SECONDS`` are removed (an active download keeps its
+    file's mtime fresh). For empty ``refs/main``, only the file itself is
+    deleted — not the model dir — so already-downloaded small files survive
+    and ``snapshot_download`` raises ``LocalEntryNotFoundError`` (which
+    fastembed catches and falls through to a network re-download).
+    """
+    cache = Path(FASTEMBED_CACHE)
+    if not cache.is_dir():
+        return
+
+    now = time.time()
+    for f in cache.glob("models--*/blobs/*.incomplete"):
+        try:
+            if now - f.stat().st_mtime > _INCOMPLETE_STALE_SECONDS:
+                f.unlink()
+        except OSError:
+            pass
+
+    for refs_main in cache.glob("models--*/refs/main"):
+        try:
+            if refs_main.stat().st_size == 0:
+                refs_main.unlink()
+                print(
+                    f"mnemos: removed empty refs/main for "
+                    f"{refs_main.parent.parent.name}",
+                    file=sys.stderr,
+                )
+        except OSError:
+            pass
+
 
 def _get_model():
     global _instance, _last_used
     with _lock:
         if _instance is None:
             _resource.guard_memory()
+            _clean_broken_cache()
             from fastembed import TextEmbedding
             kwargs = {
                 "model_name": FASTEMBED_MODEL,
