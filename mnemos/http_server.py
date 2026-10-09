@@ -43,6 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__
 from .mcp_server import (
+    client_hint_from_user_agent,
     ERR_UNSUPPORTED_PROTOCOL,
     SUPPORTED_VERSIONS,
     build_mnemos,
@@ -116,6 +117,7 @@ class MnemosHTTPHandler(BaseHTTPRequestHandler):
         messages = msg if batch else [msg]
         responses = []
         session_id = (self.headers.get("Mcp-Session-Id") or "").strip()
+        client_hint = client_hint_from_user_agent(self.headers.get("User-Agent"))
         for m in messages:
             if not isinstance(m, dict):
                 continue
@@ -124,7 +126,8 @@ class MnemosHTTPHandler(BaseHTTPRequestHandler):
                 session_id = self._session_id
             with _DISPATCH_LOCK:
                 response = handle_message(
-                    self.server.mnemos, m, session_id=session_id or None)
+                    self.server.mnemos, m, session_id=session_id or None,
+                    client_hint=client_hint)
             if response is not None:
                 responses.append(response)
 

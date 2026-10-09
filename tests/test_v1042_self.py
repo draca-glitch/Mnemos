@@ -181,10 +181,12 @@ class TestStdio:
             mnemos.close()
 
 
-def _post(url, payload, session=None):
+def _post(url, payload, session=None, user_agent=None):
     headers = {"Content-Type": "application/json"}
     if session:
         headers["Mcp-Session-Id"] = session
+    if user_agent is not None:
+        headers["User-Agent"] = user_agent
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(), headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=10) as resp:
@@ -234,6 +236,54 @@ class TestSharedHttp:
                 "arguments": {"query": "zqx77", "search_mode": "fts"},
             }), session=sid_b)
             assert _result(body)["count"] == 0
+        finally:
+            server.shutdown()
+            server.server_close()
+            mnemos.close()
+
+    def test_user_agent_names_a_client_that_never_initialised(self, monkeypatch, db_path):
+        """Claude Code keeps calling a restarted server without a new
+        initialize and sends no Mcp-Session-Id (captured 2026-10-09); its
+        User-Agent product token is the identity then. A session that did
+        initialise keeps the name it declared."""
+        srv = _reload(monkeypatch, MNEMOS_SELF="1")
+        from mnemos.core import Mnemos
+        from mnemos.storage.sqlite_store import SQLiteStore
+        from mnemos.http_server import MnemosHTTPServer
+
+        assert srv.client_hint_from_user_agent("claude-code/2.1.292 (cli)") == "claude-code"
+        assert srv.client_hint_from_user_agent("node") == "node"
+        assert srv.client_hint_from_user_agent("") is None
+        assert srv.client_hint_from_user_agent(None) is None
+
+        mnemos = Mnemos(store=SQLiteStore(db_path=db_path), namespace="user")
+        server = MnemosHTTPServer(("127.0.0.1", 0), mnemos)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        host, port = server.server_address[:2]
+        url = f"http://{host}:{port}/"
+        try:
+            _, body = _post(url, _rpc("tools/call", id_=2, params={
+                "name": "memory_store",
+                "arguments": {"project": "self", "content": "P:named by my user agent zqx88",
+                              "self": True},
+            }), user_agent="claude-code/2.1.292 (cli)")
+            assert _result(body)["namespace"] == "self:claude-code"
+
+            hdr, _ = _post(url, _rpc("initialize", params={"clientInfo": {"name": "codex"}}),
+                           user_agent="node")
+            _, body = _post(url, _rpc("tools/call", id_=3, params={
+                "name": "memory_search",
+                "arguments": {"query": "zqx88", "search_mode": "fts", "self": True},
+            }), session=hdr["Mcp-Session-Id"], user_agent="node")
+            assert _result(body)["namespace"] == "self:codex"
+
+            # urllib would otherwise send Python-urllib/3.x and name a namespace.
+            _, body = _post(url, _rpc("tools/call", id_=4, params={
+                "name": "memory_store",
+                "arguments": {"project": "self", "content": "L:nobody home", "self": True},
+            }), user_agent="")
+            assert body["result"]["isError"] is True
+            assert "identity" in _result(body)["error"]
         finally:
             server.shutdown()
             server.server_close()

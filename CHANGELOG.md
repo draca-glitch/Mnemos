@@ -6,6 +6,22 @@ before being open-sourced as Mnemos in this repo.
 
 ## [Unreleased]
 
+## [10.42.1] - 2026-10-09 (a client that never says hello)
+
+### Fixed
+- **The self namespace is also named by the client's `User-Agent`.** Claude
+  Code keeps calling a restarted shared server without a new `initialize`
+  and sends no `Mcp-Session-Id` at all (loopback capture, 2026-10-09), so
+  under 10.42.0 every `self: true` call from it failed with "no agent
+  identity" until the harness itself restarted. The HTTP transport now
+  passes the User-Agent product token (`claude-code/2.1.292 (cli)` ->
+  `claude-code`) as a hint; precedence is the session's declared
+  `clientInfo.name`, then the stdio client's, then the User-Agent, then
+  `MNEMOS_AGENT`. A generic agent string (`node`, `python-urllib`) names a
+  namespace too; set `MNEMOS_AGENT` or declare a `clientInfo.name` if that
+  is not wanted. `client_hint_from_user_agent()` in `mcp_server`,
+  `handle_message(..., client_hint=)`. 1 new test, 525 pass.
+
 ## [10.42.0] - 2026-10-09 (an agent's memories about itself)
 
 ### Added

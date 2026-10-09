@@ -108,8 +108,10 @@ memory_search(query="hedging", self=True)
 Every hot-path tool and `memory_list_tags` take `self: true`; `memory_bulk_rewrite`
 does not. The agent is the name the client declared in `initialize`
 (`clientInfo.name`), so several harnesses on one shared HTTP server each get
-their own namespace; `MNEMOS_AGENT` names the CLI (`mnemos --self briefing`)
-and is the fallback for a client that declares no name. Off by default: the
+their own namespace; a client that never initialises against the running
+process is named by its `User-Agent` product (`claude-code/2.1.292 (cli)` ->
+`self:claude-code`); `MNEMOS_AGENT` names the CLI (`mnemos --self briefing`)
+and is the last fallback. Off by default: the
 flag is not advertised, a call that passes it anyway is refused, and turning
 the feature off later hides the namespace without deleting a row.
 

@@ -269,23 +269,35 @@ def _remember_agent(session_id, client_info):
             _STDIO_AGENT[:] = [name]
 
 
-def _agent_for(session_id):
+def client_hint_from_user_agent(user_agent):
+    """Product token of a User-Agent header: `claude-code/2.1.292 (cli)` ->
+    `claude-code`. A client that never initialises against this server
+    process (Claude Code keeps calling across a server restart and sends no
+    Mcp-Session-Id, observed 2026-10-09) still names itself this way on
+    every request."""
+    if not isinstance(user_agent, str):
+        return None
+    token = user_agent.strip().split(" ", 1)[0].split("/", 1)[0].strip()
+    return token or None
+
+
+def _agent_for(session_id, client_hint=None):
     with _AGENT_LOCK:
         if session_id and session_id in _SESSION_AGENTS:
             return _SESSION_AGENTS[session_id]
         if _STDIO_AGENT:
             return _STDIO_AGENT[0]
-    return DEFAULT_AGENT
+    return client_hint or DEFAULT_AGENT
 
 
-def _self_target(mnemos, session_id):
+def _self_target(mnemos, session_id, client_hint=None):
     """The Mnemos view a self=true call runs against, or (None, reason)."""
     if not DEFAULT_SELF:
         return None, "self memory is off on this server: set MNEMOS_SELF=1 to enable it"
-    agent = _agent_for(session_id)
+    agent = _agent_for(session_id, client_hint)
     if not agent:
         return None, ("no agent identity: the client declared no clientInfo.name on "
-                      "initialize and MNEMOS_AGENT is unset")
+                      "initialize, sent no User-Agent, and MNEMOS_AGENT is unset")
     return mnemos.self_view(agent), None
 
 
@@ -479,16 +491,18 @@ def _server_info():
     return {"name": "mnemos", "version": __version__}
 
 
-def handle_message(mnemos, msg, session_id=None):
+def handle_message(mnemos, msg, session_id=None, client_hint=None):
     """Transport-agnostic JSON-RPC dispatch.
 
     Returns the response dict for a request, or None for notifications and
     id-less messages (nothing to send). Transports own framing and I/O;
     everything protocol-shaped lives here. `session_id` is the transport's
-    client handle (Mcp-Session-Id on HTTP, None on stdio); it only matters
-    for the self namespace, which needs to know who is asking.
+    client handle (Mcp-Session-Id on HTTP, None on stdio) and `client_hint`
+    the client's self-description outside the protocol (the User-Agent
+    product on HTTP); both only matter for the self namespace, which needs
+    to know who is asking.
     """
-    response = _dispatch(mnemos, msg, session_id)
+    response = _dispatch(mnemos, msg, session_id, client_hint)
     # 2026-07-28 additive result envelope; legacy clients ignore the extra
     # keys. An initialize result (has protocolVersion) stays legacy-shaped.
     if response is not None:
@@ -504,7 +518,7 @@ def handle_message(mnemos, msg, session_id=None):
     return response
 
 
-def _dispatch(mnemos, msg, session_id=None):
+def _dispatch(mnemos, msg, session_id=None, client_hint=None):
     method = msg.get("method", "")
     id_ = msg.get("id")
     params = msg.get("params", {})
@@ -583,7 +597,7 @@ def _dispatch(mnemos, msg, session_id=None):
             tool_args = dict(tool_args)
             use_self = bool(tool_args.pop("self"))
         if use_self:
-            target, reason = _self_target(mnemos, session_id)
+            target, reason = _self_target(mnemos, session_id, client_hint)
             if target is None:
                 return {
                     "jsonrpc": "2.0", "id": id_,
