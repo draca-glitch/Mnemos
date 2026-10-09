@@ -6,6 +6,39 @@ before being open-sourced as Mnemos in this repo.
 
 ## [Unreleased]
 
+## [10.42.0] - 2026-10-09 (an agent's memories about itself)
+
+### Added
+- **Self memory, behind `MNEMOS_SELF=1`.** An agent can keep memories about
+  itself (traits, observed habits, commitments about its own behaviour) in a
+  namespace of its own, `self:<agent>`, beside the user's store in the same
+  database. `memory_store`, `memory_search`, `memory_get`, `memory_update`
+  and `memory_list_tags` take `self: true`; `memory_bulk_rewrite` does not
+  (no unattended mass rewrite of a self-model). Results from a self call
+  carry the `namespace` they landed in. Off by default: the flag is not
+  advertised in `tools/list`, a call that passes it anyway gets an error
+  naming the switch, and turning the feature off later hides the namespace
+  without touching a row.
+- **Agent identity comes from the client.** The name an MCP client declares in
+  `initialize` (`clientInfo.name`) is kept per `Mcp-Session-Id` on the shared
+  HTTP server (bounded, oldest out) and once per process on stdio, then
+  sanitised into the namespace (`Claude Code` -> `self:claude-code`). Several
+  harnesses on one server each get their own self. `MNEMOS_AGENT` is the
+  fallback for a client that declares no name, and the identity of the CLI.
+- **`mnemos --self <command>`** runs any CLI command against the self
+  namespace (`mnemos --self briefing` for a session-start block, `--self add`,
+  `--self search`, `--self consolidate` for the Nyx cycle). Refuses with a
+  clear message when `MNEMOS_SELF` is off or `MNEMOS_AGENT` is unset.
+- `Mnemos.self_view(agent)` and `MnemosStore.for_namespace(ns)` (SQLite
+  implements it; other backends raise NotImplementedError, so the feature is
+  SQLite-only for now).
+- Tests: `tests/test_v1042_self.py` (9).
+
+### Changed
+- `handle_message(mnemos, msg, session_id=None)`: transports pass their
+  client handle through; the HTTP transport now reads `Mcp-Session-Id` on
+  every request for this purpose (it was issued but ignored before).
+
 ## [10.41.1] - 2026-10-06 (the mover runs as the store's owner)
 
 ### Security

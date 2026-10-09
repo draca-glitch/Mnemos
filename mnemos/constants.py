@@ -6,6 +6,7 @@ thresholds. Override via environment variables prefixed with MNEMOS_.
 """
 
 import os
+import re
 
 # --- Temporal decay ---
 # Episodic (time-bound events): half-life ≈ 46 days
@@ -388,6 +389,38 @@ DEFAULT_DB_PATH = os.environ.get(
     os.path.expanduser("~/.mnemos/memory.db")
 )
 DEFAULT_NAMESPACE = "default"
+
+# --- Self memory (v10.42.0) ---
+# An agent's memories about itself (traits it claims, habits it has observed,
+# commitments about its own behaviour) live in their own namespace,
+# "self:<agent>", beside the user's store in the same database, so backup,
+# move and the Nyx cycle (run with MNEMOS_NAMESPACE=self:<agent>) cover them.
+# Off by default: the MCP `self` flag and the CLI `--self` switch refuse until
+# MNEMOS_SELF is on, and turning it off hides the namespace without deleting a
+# row. The agent is the MCP client's declared clientInfo.name; MNEMOS_AGENT
+# names the CLI and is the fallback for a client that declares no name.
+#   export MNEMOS_SELF=1
+#   export MNEMOS_AGENT=claude-code   # CLI identity / fallback
+DEFAULT_SELF = os.environ.get(
+    "MNEMOS_SELF", "0"
+).lower() in ("1", "true", "yes", "on")
+DEFAULT_AGENT = os.environ.get("MNEMOS_AGENT") or None
+SELF_NAMESPACE_PREFIX = "self:"
+_AGENT_SLUG = re.compile(r"[^a-z0-9._-]+")
+
+
+def agent_slug(name: str) -> str:
+    """Namespace-safe form of a client name: lower case, runs of anything
+    outside [a-z0-9._-] become one dash, trimmed, at most 40 chars."""
+    slug = _AGENT_SLUG.sub("-", (name or "").strip().lower()).strip("-._")
+    return slug[:40]
+
+
+def self_namespace(agent: str) -> str:
+    slug = agent_slug(agent)
+    if not slug:
+        raise ValueError("agent name is empty after sanitising")
+    return SELF_NAMESPACE_PREFIX + slug
 
 # --- CML mode ---
 # "on"  (default): MCP tool description teaches CML, Nyx cycle cemelifies on

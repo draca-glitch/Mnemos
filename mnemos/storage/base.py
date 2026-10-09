@@ -73,6 +73,14 @@ class MnemosStore(ABC):
     def __init__(self, namespace: str = "default"):
         self.namespace = namespace
 
+    def for_namespace(self, namespace: str) -> "MnemosStore":
+        """A second handle on the same storage, scoped to another namespace.
+        Used for an agent's self namespace (v10.42.0). Backends that cannot
+        open a sibling handle leave this unimplemented and the self feature
+        is unavailable on them."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot open a sibling namespace handle")
+
     # --- Lifecycle ---
 
     @abstractmethod

@@ -115,13 +115,16 @@ class MnemosHTTPHandler(BaseHTTPRequestHandler):
         batch = isinstance(msg, list)
         messages = msg if batch else [msg]
         responses = []
+        session_id = (self.headers.get("Mcp-Session-Id") or "").strip()
         for m in messages:
             if not isinstance(m, dict):
                 continue
             if m.get("method") == "initialize" and m.get("id") is not None:
                 self._session_id = uuid.uuid4().hex
+                session_id = self._session_id
             with _DISPATCH_LOCK:
-                response = handle_message(self.server.mnemos, m)
+                response = handle_message(
+                    self.server.mnemos, m, session_id=session_id or None)
             if response is not None:
                 responses.append(response)
 

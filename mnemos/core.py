@@ -35,7 +35,7 @@ from .constants import (
     DEFAULT_NAMESPACE, DEFAULT_ENABLE_RERANK, DEFAULT_RETRIEVAL_LOG,
     DEFAULT_CONTRADICT_MODE, DEDUP_CONFIRM_DEFAULT,
     NLI_CONTRA_THRESHOLD, NLI_DEDUP_THRESHOLD, NLI_DEDUP_MAX_CANDIDATES,
-    VALID_TYPES, VALID_LAYERS, CML_MODE,
+    VALID_TYPES, VALID_LAYERS, CML_MODE, self_namespace,
 )
 
 
@@ -119,6 +119,27 @@ class Mnemos:
         self.enable_rerank = enable_rerank
         self.enable_contradiction_detection = enable_contradiction_detection
         self.enable_retrieval_log = enable_retrieval_log
+        self._self_views: dict = {}
+
+    def self_view(self, agent: str) -> "Mnemos":
+        """The same store seen through an agent's self namespace
+        (self:<agent>, v10.42.0): memories the agent keeps about itself,
+        separate from the user's. Same settings, same database, one sibling
+        store handle per agent, cached for the life of this instance."""
+        ns = self_namespace(agent)
+        if ns == self.namespace:
+            return self
+        view = self._self_views.get(ns)
+        if view is None:
+            view = Mnemos(
+                store=self.store.for_namespace(ns),
+                namespace=ns,
+                enable_rerank=self.enable_rerank,
+                enable_contradiction_detection=self.enable_contradiction_detection,
+                enable_retrieval_log=self.enable_retrieval_log,
+            )
+            self._self_views[ns] = view
+        return view
 
     # --- Store ---
 
@@ -2149,4 +2170,7 @@ class Mnemos:
         )
 
     def close(self):
+        for view in self._self_views.values():
+            view.close()
+        self._self_views.clear()
         self.store.close()

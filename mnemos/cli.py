@@ -16,7 +16,10 @@ import os
 import sys
 
 from .core import Mnemos
-from .constants import VALID_TYPES, VALID_LAYERS, DEFAULT_NAMESPACE, DEFAULT_DB_PATH
+from .constants import (
+    VALID_TYPES, VALID_LAYERS, DEFAULT_NAMESPACE, DEFAULT_DB_PATH,
+    DEFAULT_SELF, DEFAULT_AGENT, self_namespace,
+)
 
 
 def _ensure_utf8_output():
@@ -348,6 +351,9 @@ def cmd_serve(mnemos, args):
 def main(argv=None):
     _ensure_utf8_output()
     parser = argparse.ArgumentParser(prog="mnemos", description="Mnemos memory system CLI")
+    parser.add_argument("--self", dest="self_ns", action="store_true",
+                        help="operate on the agent's own namespace (self:<MNEMOS_AGENT>) "
+                             "instead of MNEMOS_NAMESPACE; needs MNEMOS_SELF=1")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # add
@@ -574,6 +580,12 @@ def main(argv=None):
         args.fn(args)
         return
     namespace = os.environ.get("MNEMOS_NAMESPACE", DEFAULT_NAMESPACE)
+    if getattr(args, "self_ns", False):
+        if not DEFAULT_SELF:
+            parser.error("--self needs MNEMOS_SELF=1 (self memory is off)")
+        if not DEFAULT_AGENT:
+            parser.error("--self needs MNEMOS_AGENT=<name> to know whose self namespace")
+        namespace = self_namespace(DEFAULT_AGENT)
     mnemos = Mnemos(namespace=namespace)
     try:
         args.fn(mnemos, args)

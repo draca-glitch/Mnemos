@@ -89,6 +89,36 @@ memory_list_tags(project?, limit?, min_count?)
 
 That is the entire surface: CRUD-plus-search on the hot path, pattern rewrite and schema introspection on the maintenance path. Hierarchy is metadata (project / subcategory columns), not architecture. Filters, validity windows, and search modes are parameters on `memory_search`, not new tools. Why this matters in [docs/philosophy.md](docs/philosophy.md#why-4-hot-path-tools-and-not-45).
 
+## Self memory (optional)
+
+Mnemos is normally the user's memory. With `MNEMOS_SELF=1` it also keeps the
+agent's memories about itself: traits it claims, habits it has observed in its
+own behaviour, commitments it made about how it works, each with the episode
+behind it. They live in their own namespace, `self:<agent>`, in the same
+database, so backup, `mnemos move` and the Nyx cycle (run it with
+`MNEMOS_NAMESPACE=self:<agent>`) cover them, and the user can read them with
+the ordinary tools. Nothing in that namespace outranks the agent's
+instructions; it is a record, not a permission system.
+
+```python
+memory_store(project="self", content="L:over-structures when unsure; tables as armour", self=True)
+memory_search(query="hedging", self=True)
+```
+
+Every hot-path tool and `memory_list_tags` take `self: true`; `memory_bulk_rewrite`
+does not. The agent is the name the client declared in `initialize`
+(`clientInfo.name`), so several harnesses on one shared HTTP server each get
+their own namespace; `MNEMOS_AGENT` names the CLI (`mnemos --self briefing`)
+and is the fallback for a client that declares no name. Off by default: the
+flag is not advertised, a call that passes it anyway is refused, and turning
+the feature off later hides the namespace without deleting a row.
+
+A session-start briefing of the self namespace is one CLI call:
+
+```bash
+MNEMOS_SELF=1 MNEMOS_AGENT=claude-code mnemos --self briefing --budget 900
+```
+
 ## Architecture (visual summary)
 
 ```

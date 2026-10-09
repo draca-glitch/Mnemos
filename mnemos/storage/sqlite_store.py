@@ -237,6 +237,9 @@ class SQLiteStore(MnemosStore):
         self._embed_adoption: dict = {}
         self._reranker_adoption = None
 
+    def for_namespace(self, namespace: str) -> "SQLiteStore":
+        return SQLiteStore(db_path=self.db_path, namespace=namespace)
+
     # --- Connection management ---
 
     def _get_conn(self):

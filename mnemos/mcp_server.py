@@ -19,9 +19,11 @@ import os
 import sys
 import threading
 import time
+from collections import OrderedDict
 
 from .core import Mnemos
 from . import _resource, __version__
+from .constants import DEFAULT_SELF, DEFAULT_AGENT
 from .constants import (
     DEFAULT_PROJECTS, VALID_TYPES, VALID_LAYERS, DEFAULT_NAMESPACE,
     CML_MODE, DEFAULT_TOOL_USAGE_LOG,
@@ -220,6 +222,73 @@ TOOL_DEFINITIONS = [
 ]
 
 
+# --- Self memory (v10.42.0) ---
+# `self: true` on a tool call points it at the agent's own namespace
+# (self:<agent>) instead of the user's store. The flag is only advertised,
+# and only honoured, when MNEMOS_SELF is on. bulk_rewrite stays out: an
+# unattended mass rewrite of an agent's self-model is not a thing to offer.
+SELF_TOOLS = frozenset({
+    "memory_store", "memory_search", "memory_get", "memory_update", "memory_list_tags",
+})
+_SELF_PROPERTY = {
+    "type": "boolean",
+    "default": False,
+    "description": (
+        "Operate on the agent's own namespace (self:<agent>) instead of the user's "
+        "store: memories the agent keeps about itself, traits and observed habits, "
+        "commitments about its own behaviour, each with the episode behind it. Same "
+        "database, separate namespace. The agent is the name the client declared in "
+        "initialize (clientInfo.name), or MNEMOS_AGENT when it declared none."
+    ),
+}
+if DEFAULT_SELF:
+    for _tool in TOOL_DEFINITIONS:
+        if _tool["name"] in SELF_TOOLS:
+            _tool["inputSchema"]["properties"]["self"] = _SELF_PROPERTY
+
+# An MCP client names itself once, in initialize. The shared HTTP server sees
+# many clients, so the name is kept per Mcp-Session-Id (bounded, oldest out);
+# a stdio server has exactly one client for its lifetime.
+_SESSION_AGENTS: "OrderedDict[str, str]" = OrderedDict()
+_SESSION_AGENTS_MAX = 512
+_STDIO_AGENT: list = []
+_AGENT_LOCK = threading.Lock()
+
+
+def _remember_agent(session_id, client_info):
+    name = client_info.get("name") if isinstance(client_info, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        return
+    with _AGENT_LOCK:
+        if session_id:
+            _SESSION_AGENTS[session_id] = name
+            _SESSION_AGENTS.move_to_end(session_id)
+            while len(_SESSION_AGENTS) > _SESSION_AGENTS_MAX:
+                _SESSION_AGENTS.popitem(last=False)
+        else:
+            _STDIO_AGENT[:] = [name]
+
+
+def _agent_for(session_id):
+    with _AGENT_LOCK:
+        if session_id and session_id in _SESSION_AGENTS:
+            return _SESSION_AGENTS[session_id]
+        if _STDIO_AGENT:
+            return _STDIO_AGENT[0]
+    return DEFAULT_AGENT
+
+
+def _self_target(mnemos, session_id):
+    """The Mnemos view a self=true call runs against, or (None, reason)."""
+    if not DEFAULT_SELF:
+        return None, "self memory is off on this server: set MNEMOS_SELF=1 to enable it"
+    agent = _agent_for(session_id)
+    if not agent:
+        return None, ("no agent identity: the client declared no clientInfo.name on "
+                      "initialize and MNEMOS_AGENT is unset")
+    return mnemos.self_view(agent), None
+
+
 def tool_store(mnemos, params):
     return mnemos.store_memory(
         project=params.get("project", ""),
@@ -410,14 +479,16 @@ def _server_info():
     return {"name": "mnemos", "version": __version__}
 
 
-def handle_message(mnemos, msg):
+def handle_message(mnemos, msg, session_id=None):
     """Transport-agnostic JSON-RPC dispatch.
 
     Returns the response dict for a request, or None for notifications and
     id-less messages (nothing to send). Transports own framing and I/O;
-    everything protocol-shaped lives here.
+    everything protocol-shaped lives here. `session_id` is the transport's
+    client handle (Mcp-Session-Id on HTTP, None on stdio); it only matters
+    for the self namespace, which needs to know who is asking.
     """
-    response = _dispatch(mnemos, msg)
+    response = _dispatch(mnemos, msg, session_id)
     # 2026-07-28 additive result envelope; legacy clients ignore the extra
     # keys. An initialize result (has protocolVersion) stays legacy-shaped.
     if response is not None:
@@ -433,7 +504,7 @@ def handle_message(mnemos, msg):
     return response
 
 
-def _dispatch(mnemos, msg):
+def _dispatch(mnemos, msg, session_id=None):
     method = msg.get("method", "")
     id_ = msg.get("id")
     params = msg.get("params", {})
@@ -474,6 +545,7 @@ def _dispatch(mnemos, msg):
                 "serverInfo": _server_info(),
             },
         }
+        _remember_agent(session_id, params.get("clientInfo"))
         _maybe_warmup(mnemos)
         return response
 
@@ -505,8 +577,26 @@ def _dispatch(mnemos, msg):
                     "isError": True,
                 },
             }
+        target = mnemos
+        use_self = False
+        if isinstance(tool_args, dict) and "self" in tool_args:
+            tool_args = dict(tool_args)
+            use_self = bool(tool_args.pop("self"))
+        if use_self:
+            target, reason = _self_target(mnemos, session_id)
+            if target is None:
+                return {
+                    "jsonrpc": "2.0", "id": id_,
+                    "result": {
+                        "content": [{"type": "text", "text": json.dumps({"error": reason})}],
+                        "isError": True,
+                    },
+                }
         try:
-            result = handler(mnemos, tool_args)
+            result = handler(target, tool_args)
+            if use_self and isinstance(result, dict):
+                result = dict(result)
+                result["namespace"] = target.namespace
             return {
                 "jsonrpc": "2.0", "id": id_,
                 "result": {"content": [{"type": "text", "text": json.dumps(result)}]},
