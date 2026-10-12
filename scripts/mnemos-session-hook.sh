@@ -21,21 +21,21 @@
 #       "hooks": [{
 #         "type": "command",
 #         "command": "/path/to/mnemos/scripts/mnemos-session-hook.sh start",
-#         "timeout": 30000
+#         "timeout": 30
 #       }]
 #     }],
 #     "UserPromptSubmit": [{
 #       "hooks": [{
 #         "type": "command",
 #         "command": "/path/to/mnemos/scripts/mnemos-session-hook.sh prompt",
-#         "timeout": 5000
+#         "timeout": 5
 #       }]
 #     }],
 #     "Stop": [{
 #       "hooks": [{
 #         "type": "command",
 #         "command": "/path/to/mnemos/scripts/mnemos-session-hook.sh stop",
-#         "timeout": 5000
+#         "timeout": 5
 #       }]
 #     }]
 #   }
