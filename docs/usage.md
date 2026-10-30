@@ -110,6 +110,11 @@ mnemos embed-fill                    # embed active memories that have no vector
 mnemos reembed --dry-run             # rebuild the WHOLE active vector index under the current model/dims
 mnemos doctor                        # health check (schema, FTS/vector sync, coherence, dimensions, tier-2); --migrate applies safe repairs
 
+# Retrieval feedback (v10.43+): tell the log which retrievals the reply used,
+# then read recall@k and MRR of real searches back out of it
+echo '{"pairs": [["wheel width", 7451]], "uncited_zero": true}' | mnemos mark-cited
+mnemos retrieval-report --days 30
+
 # Predictive priming (used by session hooks)
 mnemos prime "current task description"
 

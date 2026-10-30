@@ -60,6 +60,14 @@ AUDIT_LINK_RELATIONS = frozenset({"contradiction-cleared"})
 # filter) is preserved as the min gate; the new HIGH threshold introduces
 # the silent-link zone that kills false-positive warnings.
 CONTRADICTION_VEC_THRESHOLD = 0.35
+
+# Dated-series evolution at store time (v10.43.0). Consecutive entries of
+# one series ("D:TMG SWEEP <date>") measure 0.37-0.43 apart on e5-large,
+# which is also where unrelated same-topic pairs sit, so the series key and
+# the dates carry the decision and the distance only keeps strangers out.
+SERIES_EVOLVES_MAX_DISTANCE = float(
+    os.environ.get("MNEMOS_SERIES_EVOLVES_MAX_DISTANCE", "0.50"))
+SERIES_KEY_TOKENS = 3
 CONTRADICTION_RERANK_MIN = 0.35    # below: skip entirely
 CONTRADICTION_RERANK_HIGH = 0.60   # above: likely contradicts; between: relates
 

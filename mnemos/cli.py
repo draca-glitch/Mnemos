@@ -80,6 +80,43 @@ def cmd_search(mnemos, args):
             print(f"  #{mid} [{project}] {content}")
 
 
+def cmd_mark_cited(mnemos, args):
+    """Feed citation verdicts into the retrieval log.
+
+    Reads JSON from stdin: {"pairs": [[query, memory_id], ...],
+    "since": "YYYY-MM-DD HH:MM:SS" (optional), "uncited_zero": bool}.
+    Built for a harness Stop hook that scans the reply for the memory ids
+    it cited after each search; pure SQL, no model load.
+    """
+    payload = json.load(sys.stdin)
+    pairs = [(p[0], int(p[1])) for p in payload.get("pairs", [])]
+    result = mnemos.mark_cited(
+        pairs,
+        since=payload.get("since"),
+        uncited_zero=bool(payload.get("uncited_zero", args.uncited_zero)),
+    )
+    print(json.dumps(result))
+
+
+def cmd_retrieval_report(mnemos, args):
+    report = mnemos.retrieval_report(days=args.days)
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return
+    if not report:
+        print("retrieval log unavailable on this store")
+        return
+    print(f"Retrieval report, last {report['days']} days (since {report['since']})")
+    print(f"  search events: {report['events']}  rows: {report['rows']}")
+    print(f"  judged: {report['judged_events']}  cited: {report['cited_events']}  "
+          f"surfaced-not-cited: {report['surfaced_not_cited_events']}")
+    if "mrr" in report:
+        print("  recall@1 {recall_at_1:.3f}  @3 {recall_at_3:.3f}  @5 {recall_at_5:.3f}  "
+              "@10 {recall_at_10:.3f}  MRR {mrr:.3f}".format(**report))
+    else:
+        print("  no cited events yet; feed verdicts with `mnemos mark-cited`")
+
+
 def cmd_get(mnemos, args):
     result = mnemos.get(args.id)
     print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -394,6 +431,19 @@ def main(argv=None):
     p.set_defaults(fn=cmd_search)
 
     # get
+    p = sub.add_parser("mark-cited",
+                       help="Mark retrievals as used from citations (JSON on stdin: "
+                            "{pairs:[[query,id],...], since?, uncited_zero?})")
+    p.add_argument("--uncited-zero", action="store_true",
+                   help="also mark the unjudged rows of those queries as not useful")
+    p.set_defaults(fn=cmd_mark_cited)
+
+    p = sub.add_parser("retrieval-report",
+                       help="Recall@k and MRR of real searches, from the retrieval log")
+    p.add_argument("--days", type=int, default=30)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_retrieval_report)
+
     p = sub.add_parser("get", help="Get a memory by ID")
     p.add_argument("id", type=int)
     p.set_defaults(fn=cmd_get)

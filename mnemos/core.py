@@ -31,6 +31,7 @@ from . import nli
 from .constants import (
     HYBRID_MIN_MEMORIES, IMPORTANCE_THRESHOLDS, VEC_DEDUP_MAX_DISTANCE,
     DEDUP_RERANK_THRESHOLD, CONTRADICTION_VEC_THRESHOLD,
+    SERIES_EVOLVES_MAX_DISTANCE, SERIES_KEY_TOKENS,
     CONTRADICTION_RERANK_MIN, CONTRADICTION_RERANK_HIGH,
     DEFAULT_NAMESPACE, DEFAULT_ENABLE_RERANK, DEFAULT_RETRIEVAL_LOG,
     DEFAULT_CONTRADICT_MODE, DEDUP_CONFIRM_DEFAULT,
@@ -97,6 +98,35 @@ def _extract_cml_subject(content):
             if subject:
                 return prefix[0], subject
     return None, None
+
+
+_ISO_DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
+
+
+def _series_key(content):
+    """(cml_type, key, date) for a dated CML first line, else None.
+
+    A dated series is a run of memories that restate the same subject at
+    successive dates ("D:TMG SWEEP 2026-10-14 ...", "D:TMG SWEEP 2026-10-21
+    ..."). The key is the first SERIES_KEY_TOKENS word tokens before the
+    first ISO date, digits included, so "HIBANA D-16" and "HIBANA D-22" stay
+    distinct while two sweeps of the same project collide. Lines with no
+    date, or with the date before any subject word, are not a series.
+    """
+    first_line = content.strip().split("\n")[0]
+    for prefix in CML_TYPE_PREFIXES:
+        if not first_line.startswith(prefix):
+            continue
+        rest = first_line[len(prefix):].strip()
+        m = _ISO_DATE_RE.search(rest)
+        if not m:
+            return None
+        tokens = re.findall(r"\w+", rest[:m.start()])
+        if len(tokens) < 2:
+            return None
+        key = " ".join(t.lower() for t in tokens[:SERIES_KEY_TOKENS])
+        return prefix[0], key, m.group(1)
+    return None
 
 
 class Mnemos:
@@ -336,6 +366,19 @@ class Mnemos:
                     f"⚠ relationship flag(s) detected: {parts}. Review conflicting memories."
                 )
 
+        # Dated-series evolution (v10.43.0): a newer entry of the same
+        # dated series supersedes the older one for default search.
+        if cached_embedding:
+            evolved = self._detect_series_evolution(mid, content, project, cached_embedding)
+            if evolved:
+                result["evolved"] = evolved
+                ids = ", ".join(f"#{e['id']}" for e in evolved)
+                result["evolved_note"] = (
+                    f"older entries of the same dated series ({ids}) got "
+                    "valid_until=today and an evolves link; clear with "
+                    "memory_update(id, valid_until=null) if that is wrong."
+                )
+
         return result
 
     def _store_split(self, project, content, tags, importance, mem_type, layer,
@@ -510,6 +553,66 @@ class Mnemos:
         finally:
             self.enable_contradiction_detection = prev_contra
         return summary
+
+    def _detect_series_evolution(self, new_id, content, project, embedding):
+        """Expire the older members of a dated series the new memory extends.
+
+        Seven months of retrieval data on the Epsilon store showed newer
+        entries of a dated series ("D:TMG SWEEP <date>") displacing older
+        ones in search while both stayed active and unlinked, and the
+        contradiction tier never sees them because a later sweep does not
+        contradict an earlier one. Nyx phase 4 only judges pairs its
+        contradiction finder flags, so nothing recorded the succession.
+
+        Gate: same project and namespace, same CML type, same series key,
+        the new date strictly later, and a vector distance under
+        SERIES_EVOLVES_MAX_DISTANCE so a stranger that happens to share a
+        key is left alone. Vector distance alone cannot do this job:
+        consecutive sweeps measure 0.37 to 0.43 apart on e5-large, the same
+        band as unrelated same-topic pairs.
+
+        Effect mirrors phase 4 EVOLVED: link older -> newer `evolves`, set
+        the older memory's valid_until to today. Verified or importance>=9
+        memories get the link only, like phase 4's guard.
+        """
+        key = _series_key(content)
+        if key is None:
+            return []
+        cml_type, series, new_date = key
+        try:
+            near = {
+                sid: dist for sid, dist in self.store.search_vec(
+                    embedding, project=project, limit=20)
+                if sid != new_id and dist < SERIES_EVOLVES_MAX_DISTANCE
+            }
+        except Exception:
+            return []
+        if not near:
+            return []
+        memories = self.store.get_memories_by_ids(list(near))
+        today = datetime.now().strftime("%Y-%m-%d")
+        evolved = []
+        for mid, mem in memories.items():
+            if mem.project != project:
+                continue
+            old_key = _series_key(mem.content or "")
+            if old_key is None or old_key[0] != cml_type or old_key[1] != series:
+                continue
+            if old_key[2] >= new_date:
+                continue
+            if not self.store.store_link(mid, new_id, "evolves", 0.7):
+                continue
+            entry = {"id": mid, "date": old_key[2], "link": "evolves",
+                     "distance": round(float(near[mid]), 4)}
+            guarded = bool(getattr(mem, "verified", 0)) or getattr(mem, "importance", 5) >= 9
+            if guarded:
+                entry["valid_until"] = None
+                entry["guard"] = "verified or importance>=9: link only"
+            else:
+                self.store.update_memory(mid, {"valid_until": today})
+                entry["valid_until"] = today
+            evolved.append(entry)
+        return evolved
 
     def _unified_dedup(self, content, project, tags, mem_type="", layer=""):
         """3-way dedup: FTS + CML + vec → cross-encoder rerank → confidence."""
@@ -819,8 +922,14 @@ class Mnemos:
                 classification, ("relates", False),
             )
 
-            # Persist link (skipped for `unrelated`)
-            if link_type is not None:
+            # Persist link (skipped for `unrelated`). `evolves` reads
+            # source -> target as "A developed into B", so the older memory
+            # is the source; phase 4's staleness guard treats an outgoing
+            # evolves link as "this one is outdated" and would otherwise
+            # have retired the new memory instead of the old one.
+            if link_type == "evolves":
+                self.store.store_link(hit_id, new_id, link_type, round(score, 4))
+            elif link_type is not None:
                 self.store.store_link(new_id, hit_id, link_type, round(score, 4))
 
             # Emit warning only for classifications that need caller attention
@@ -1237,6 +1346,31 @@ class Mnemos:
             self.store.mark_retrieval_useful(mid)
 
         return memory.to_dict()
+
+    # --- Retrieval feedback (v10.43.0) ---
+
+    def mark_cited(self, pairs, since=None, uncited_zero=False) -> dict:
+        """Record which retrievals the caller actually used.
+
+        `pairs` are (query, memory_id) tuples: the query string exactly as
+        it was passed to search, and a memory the reply went on to cite.
+        With uncited_zero=True the remaining unjudged rows of those queries
+        are set to 0 (surfaced, not cited), which makes precision as well
+        as recall computable from the log. `since` bounds the rows touched
+        (default: the last 24 hours). Inert when retrieval logging is off.
+        """
+        if not self.enable_retrieval_log:
+            return {"cited": 0, "uncited": 0, "retrieval_log": "off"}
+        cited = self.store.mark_retrievals_cited(list(pairs), since=since)
+        uncited = 0
+        if uncited_zero:
+            uncited = self.store.mark_retrievals_uncited(
+                [q for q, _ in pairs], since=since)
+        return {"cited": cited, "uncited": uncited}
+
+    def retrieval_report(self, days: int = 30) -> dict:
+        """Recall@k and MRR of real searches, from the retrieval log."""
+        return self.store.retrieval_report(days=days)
 
     def update(self, mid: int, **fields) -> dict:
         # Reading is access, not evidence that a fact remains true. A content

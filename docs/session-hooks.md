@@ -40,6 +40,28 @@ If sessions routinely end without stored memories, the fix is in-session
 prompting (CLAUDE.md rules, tool-use instructions), not a second pipeline.
 The reference stop hook therefore does nothing unless you customize it.
 
+## Closing the retrieval loop from the stop hook (v10.43+)
+
+`MNEMOS_RETRIEVAL_LOG=1` logs every search hit, but the only built-in
+usefulness verdict is a `memory_get` shortly after the search, and an agent
+that answers from the search snippet never calls get (on one production store,
+363 verdicts on 11 902 retrievals after seven months). The stop hook has the
+transcript, so it can supply the missing verdict: for every `memory_search`
+call, take its `query` and the ids it returned, scan the assistant text that
+followed for cited ids (`#1234`), and feed the pairs to
+
+```bash
+echo '{"pairs": [["<query>", 1234], ...], "since": "<session start>", "uncited_zero": true}' \
+  | mnemos mark-cited
+```
+
+`uncited_zero` marks the other returned rows of those queries as surfaced but
+not cited, so `mnemos retrieval-report` can give precision as well as
+recall@k and MRR. Pure SQL, no model load, so it fits inside a hook timeout.
+Ids the reply only repeats from the user's own text, or that were just stored
+in the same turn, are not retrieval hits; the reference hook on Epsilon
+excludes both.
+
 ## Wiring into Claude Code
 
 Add to `~/.claude/settings.json`:

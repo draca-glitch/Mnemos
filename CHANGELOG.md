@@ -6,6 +6,60 @@ before being open-sourced as Mnemos in this repo.
 
 ## [Unreleased]
 
+## [10.43.0] - 2026-10-30 (seven months of retrieval data, read back)
+
+Three changes that fall out of reading the Epsilon store's own retrieval log
+(11 902 logged retrievals, March to October 2026) and a transcript-based
+recall eval against it (52 real query/memory pairs, R@5 0.88, R@10 0.98 at
+the query step). The engine was not the weak point; what it could not see
+about itself was.
+
+### Added
+- **Citation feedback into the retrieval log.** `memory_get` shortly after a
+  search was the only usefulness signal, and an agent that answers straight
+  from the search snippet never calls get: 363 of 11 902 logged retrievals
+  carried a verdict after seven months, so the log could not say which
+  retrievals landed. `Mnemos.mark_cited(pairs, since=None, uncited_zero=False)`
+  takes `(query, memory_id)` pairs, the query exactly as it was passed to
+  search and a memory the reply went on to cite, and sets `useful=1` on the
+  matching rows (default window 24 h); `uncited_zero=True` sets the remaining
+  unjudged rows of those queries to 0 (surfaced, not cited), which makes
+  precision as well as recall computable. Store methods
+  `mark_retrievals_cited` / `mark_retrievals_uncited`, CLI `mnemos mark-cited`
+  reading `{"pairs": [[query, id], ...], "since"?, "uncited_zero"?}` on stdin,
+  pure SQL so a harness Stop hook can call it without a model load. Inert when
+  retrieval logging is off.
+- **`mnemos retrieval-report [--days N] [--json]`** (`Mnemos.retrieval_report`).
+  One search event is the rows sharing `(query, retrieved_at)` and their
+  insertion order is the rank; the report gives events, judged events, cited
+  events, surfaced-not-cited events, recall@1/3/5/10 and MRR over the cited
+  events. The weekly retrieval eval becomes one query against the log instead
+  of a transcript mining run.
+- **Dated-series evolution at store time.** Newer entries of a dated series
+  ("D:TMG SWEEP 2026-10-21 ..." after "D:TMG SWEEP 2026-10-14 ...") were
+  displacing the older ones in search while both stayed active and unlinked:
+  a later sweep does not contradict an earlier one, so the contradiction tier
+  never saw the pair, and Nyx phase 4 only judges what that finder flags.
+  `store_memory` now detects the pattern mechanically: same project, same CML
+  type, same series key (first three word tokens before the first ISO date,
+  digits included, so "HIBANA D-16" and "HIBANA D-22" stay distinct), a
+  strictly later date, and vector distance under
+  `SERIES_EVOLVES_MAX_DISTANCE` (0.50, env `MNEMOS_SERIES_EVOLVES_MAX_DISTANCE`)
+  to keep strangers out. Effect mirrors a phase 4 EVOLVED verdict: `evolves`
+  link older -> newer and `valid_until=today` on the older entry; verified or
+  importance>=9 entries get the link only. The store result carries `evolved`
+  and an `evolved_note` with the undo (`memory_update(id, valid_until=null)`).
+  Distance alone could not do this: consecutive sweeps measure 0.37-0.43 apart
+  on e5-large, the same band as unrelated same-topic pairs.
+
+### Fixed
+- **`evolves` link direction in the LLM relationship classifier.** The store
+  path wrote `new -> old`; the relation reads source -> target as "A developed
+  into B" and phase 4's staleness guard treats an outgoing `evolves` link as
+  "this memory is outdated", so it would have retired the new memory instead
+  of the old one. Now `old -> new`, matching phase 4. Only
+  `MNEMOS_CONTRADICT_MODE=llm` deployments were affected.
+
 ## [10.42.4] - 2026-10-12 (one roof, no budgets)
 
 ### Changed

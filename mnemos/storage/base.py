@@ -355,6 +355,22 @@ class MnemosStore(ABC):
         """
         return None
 
+    def mark_retrievals_cited(self, pairs: list, since: Optional[str] = None) -> int:
+        """Mark (query, memory_id) retrievals as useful because the caller
+        went on to cite that memory in its reply. Returns rows updated.
+        No-op by default."""
+        return 0
+
+    def mark_retrievals_uncited(self, queries: list, since: Optional[str] = None) -> int:
+        """Mark the still-unjudged rows of these queries as not useful
+        (surfaced, never cited). Returns rows updated. No-op by default."""
+        return 0
+
+    def retrieval_report(self, days: int = 30) -> dict:
+        """Recall@k and MRR over judged search events in the retrieval log.
+        Empty dict by default."""
+        return {}
+
     # --- Content-based memory search (used by bulk_rewrite) ---
 
     def find_memories_by_content(

@@ -18,7 +18,7 @@ Recommended for personal/small-team deployments up to ~10K memories on SSD,
 
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import struct
 import sys
 from typing import Optional
@@ -1531,6 +1531,88 @@ class SQLiteStore(MnemosStore):
             conn.commit()
         except Exception:
             pass
+
+    # --- Retrieval feedback from citations (v10.43.0) ---
+    #
+    # memory_get after a search was the only usefulness signal, and agents
+    # that answer straight from the search snippet never call get: on the
+    # Epsilon store 363 of 11 902 logged retrievals carried a verdict after
+    # seven months. A Stop hook that scans the reply for the ids it cited
+    # closes the loop; these two writers are what it calls.
+
+    @staticmethod
+    def _since_or_default(since):
+        return since or (datetime.now() - timedelta(hours=24)).strftime(
+            "%Y-%m-%d %H:%M:%S")
+
+    def mark_retrievals_cited(self, pairs, since=None):
+        if not pairs:
+            return 0
+        since = self._since_or_default(since)
+        conn = self._get_conn()
+        n = 0
+        for query, memory_id in pairs:
+            cur = conn.execute(
+                "UPDATE retrieval_log SET useful = 1 "
+                "WHERE query = ? AND memory_id = ? "
+                "AND (useful IS NULL OR useful = 0) AND retrieved_at >= ?",
+                (query, int(memory_id), since),
+            )
+            n += cur.rowcount
+        conn.commit()
+        return n
+
+    def mark_retrievals_uncited(self, queries, since=None):
+        if not queries:
+            return 0
+        since = self._since_or_default(since)
+        conn = self._get_conn()
+        n = 0
+        for query in set(queries):
+            cur = conn.execute(
+                "UPDATE retrieval_log SET useful = 0 "
+                "WHERE query = ? AND useful IS NULL AND retrieved_at >= ?",
+                (query, since),
+            )
+            n += cur.rowcount
+        conn.commit()
+        return n
+
+    def retrieval_report(self, days=30):
+        """One search event = the rows sharing (query, retrieved_at); their
+        insertion order is the rank. Recall@k and MRR are computed over
+        events with at least one cited row, coverage over all events."""
+        since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        conn = self._get_conn()
+        rows = conn.execute(
+            "WITH ev AS ("
+            "  SELECT query, retrieved_at, useful, "
+            "         ROW_NUMBER() OVER (PARTITION BY query, retrieved_at ORDER BY id) AS rnk "
+            "  FROM retrieval_log WHERE retrieved_at >= ?"
+            ") "
+            "SELECT COUNT(*) AS n, "
+            "       SUM(useful IS NOT NULL) AS judged, "
+            "       MIN(CASE WHEN useful = 1 THEN rnk END) AS first_hit "
+            "FROM ev GROUP BY query, retrieved_at",
+            (since,),
+        ).fetchall()
+        events = len(rows)
+        judged = [r for r in rows if r["judged"]]
+        hits = [r["first_hit"] for r in rows if r["first_hit"] is not None]
+        report = {
+            "days": days,
+            "since": since,
+            "events": events,
+            "judged_events": len(judged),
+            "cited_events": len(hits),
+            "surfaced_not_cited_events": len(judged) - len(hits),
+            "rows": int(sum(r["n"] for r in rows)),
+        }
+        if hits:
+            for k in (1, 3, 5, 10):
+                report[f"recall_at_{k}"] = round(sum(1 for h in hits if h <= k) / len(hits), 4)
+            report["mrr"] = round(sum(1.0 / h for h in hits) / len(hits), 4)
+        return report
 
     # --- Content-based memory search (used by bulk_rewrite) ---
 
