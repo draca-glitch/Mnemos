@@ -214,6 +214,15 @@ CANDIDACY_TOP_K = int(os.environ.get("MNEMOS_CANDIDACY_TOP_K", "3"))
 # Phase 3 insight novelty gate: a bridge insight entailed by either source
 # alone is a restatement; the link is kept, the insight memory is not.
 WEAVE_NOVELTY_TAU = float(os.environ.get("MNEMOS_WEAVE_NOVELTY_TAU", "0.85"))
+# Phase 3 bridge memories (10.44.0): off by default. Weave always records the
+# LINK between two memories; with MNEMOS_WEAVE_STORE_INSIGHTS=1 it also stores
+# the model's one-line insight as a new memory, at most WEAVE_MAX_INSIGHTS per
+# run (the most similar pairs first). One memory per accepted pair turned out
+# to scale with how agreeable the weave model is, not with what was learned.
+WEAVE_STORE_INSIGHTS = os.environ.get(
+    "MNEMOS_WEAVE_STORE_INSIGHTS", "0"
+).lower() in ("1", "true", "yes", "on")
+WEAVE_MAX_INSIGHTS = int(os.environ.get("MNEMOS_WEAVE_MAX_INSIGHTS", "5"))
 # Phase 4 judge: 'llm' (judge immediately), 'queue' (record
 # contradiction-candidate links for a later LLM-tier run), 'auto'
 # (llm when an LLM is configured, queue otherwise). Read at call time.

@@ -404,6 +404,7 @@ class TestWeaveHygiene:
             phases, "opus_chat",
             lambda *a, **k: "LINK_TYPE: reflects\nSTRENGTH: 0.8\n"
                             "INSIGHT: a restatement of the sources")
+        monkeypatch.setattr(phases, "WEAVE_STORE_INSIGHTS", True)
         monkeypatch.setattr(phases.nli, "is_available", lambda: True)
         monkeypatch.setattr(phases.nli, "p_entailment", lambda p, h: 0.95)
         stats = phases.phase_weave(conn, embeddings, mem_by_id,

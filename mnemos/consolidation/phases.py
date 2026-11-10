@@ -51,7 +51,7 @@ from ..constants import (
     SYNTHESIS_MAX_TOKENS, llm_max_tokens,
     MERGE_ENGINE_DEFAULT, CLUSTER_GATE_DEFAULT, CLUSTER_GATE_TAU,
     CLUSTER_GATE_MAX_LINES, CANDIDACY_DEFAULT, CANDIDACY_TOP_K,
-    WEAVE_NOVELTY_TAU,
+    WEAVE_NOVELTY_TAU, WEAVE_STORE_INSIGHTS, WEAVE_MAX_INSIGHTS,
 )
 from .mechanical import mechanical_merge_cluster
 from .. import nli
@@ -1007,7 +1007,15 @@ def phase_weave(conn, all_embeddings, mem_by_id, is_surge, execute=False):
             # either source alone adds no information; keep the link, skip
             # the memory. In-distribution NLI use (literal entailment), not
             # the refuted relation classification (benchmarks/weave-bench).
-            if insight:
+            if insight and not WEAVE_STORE_INSIGHTS:
+                stats["insights_skipped_disabled"] = (
+                    stats.get("insights_skipped_disabled", 0) + 1)
+            elif insight and stats["insights_stored"] >= WEAVE_MAX_INSIGHTS:
+                stats["insights_skipped_cap"] = (
+                    stats.get("insights_skipped_cap", 0) + 1)
+                log(f"    → Insight not stored (cap of {WEAVE_MAX_INSIGHTS} "
+                    "per run reached), link kept")
+            elif insight:
                 redundant = False
                 if nli.is_available():
                     for src in (mem_a, mem_b):
@@ -1029,7 +1037,9 @@ def phase_weave(conn, all_embeddings, mem_by_id, is_surge, execute=False):
         time.sleep(0.5)
 
     log(f"Phase 3 done: {stats['pairs_evaluated']} evaluated, "
-        f"{stats['links_created']} links, {stats['insights_stored']} insights")
+        f"{stats['links_created']} links, {stats['insights_stored']} insights"
+        + ("" if WEAVE_STORE_INSIGHTS else
+           " (bridge memories off, MNEMOS_WEAVE_STORE_INSIGHTS=1 stores them)"))
     return stats
 
 

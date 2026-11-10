@@ -230,6 +230,8 @@ The opt-in `MNEMOS_MERGE_ENGINE=llm` restores the generative path. Clusters of s
 
 Scans pairs of memories from different projects for cross-category connections. A candidate pair must have cosine similarity above a weave-specific threshold (lower than the tight/topic thresholds, because cross-domain connections are usually weaker in embedding space than intra-domain duplicates). The LLM is asked whether the pair genuinely reflects a thematic or causal connection; if yes, a `memory_links` row is created with `relation_type='related'` and a strength score. Output is pruned to the top-K per memory to prevent link explosion.
 
+Weave's output is the link. The model also returns a one-line insight, and until v10.43 every accepted pair stored that line as a new `bridge` memory (unless the NLI novelty gate found it entailed by one source). Since v10.44.0 that is opt-in: `MNEMOS_WEAVE_STORE_INSIGHTS=1` stores bridge memories again, at most `MNEMOS_WEAVE_MAX_INSIGHTS` (default 5) per run, the most similar pairs first. The reason is in the 10.44.0 changelog entry: the number of bridges tracked how readily the weave model says yes, and a more agreeable model filled two stores with them in three weeks.
+
 ### Phase 4. Contradict
 
 Scans same-project decision/fact pairs and classifies their relationship. It scans the **full active set** (`all_embeddings`), not just the mergeable subset, so protected memories (decisions, verified, `importance >= 9`), exactly the population most worth contradiction-scanning, are included. Pairs already carrying a verdict or candidate link are skipped before scoring, so a cleared pair never re-enters the loop.

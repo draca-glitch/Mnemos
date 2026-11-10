@@ -6,6 +6,46 @@ before being open-sourced as Mnemos in this repo.
 
 ## [Unreleased]
 
+## [10.44.0] - 2026-11-10 (weave stores links only)
+
+BEHAVIOUR CHANGE: phase 3 (weave) no longer stores bridge memories unless asked.
+
+Weave judges cross-category pairs and records a link for each pair the model
+accepts. Until now it also stored the model's one-line insight as a new active
+memory (tags `synthesized,nyx-cycle,bridge`), one per accepted pair, unless the
+NLI novelty gate found the line entailed by a source. That made the number of
+new memories a function of how readily the weave model says yes. On one
+production store the weekly run stored 4 to 5 bridges while the weave model
+accepted a minority of pairs; after a model change it accepted 15 of 16 pairs
+and stored 27 to 29 a run, 9 % of the active store in four runs. A second store
+that runs the LLM tier nightly reached 68 % bridges in three weeks, all filed
+under one project, and they were crowding real memories out of search results.
+The novelty gate only removes restatements; a generic "both show the same
+habit" line is new by its measure.
+
+### Changed
+- `MNEMOS_WEAVE_STORE_INSIGHTS` (default off): weave stores the link and skips
+  the bridge memory. Set it to `1` to store bridge memories as before. The run
+  summary says which mode ran, and `insights_skipped_disabled` counts what was
+  not stored.
+- `MNEMOS_WEAVE_MAX_INSIGHTS` (default 5): with the switch on, one run stores
+  at most this many bridges, the most similar pairs first
+  (`insights_skipped_cap` counts the rest). Links are never capped by it.
+- The novelty gate (`MNEMOS_WEAVE_NOVELTY_TAU`) is unchanged and applies only
+  when bridges are stored.
+
+### Cleaning up an existing store
+Bridges carry the `bridge` and `nyx-cycle` tags. Archiving is reversible:
+`mnemos search`/SQL to list the ids (`status='active' AND tags LIKE '%bridge%'
+AND tags LIKE '%nyx-cycle%'`), then `mnemos delete ID` for each (archive is the
+default), after `mnemos backup`. The links between the source memories stay.
+
+### Not changed
+- The weave prompt and the acceptance rate behind it: a model that links nearly
+  every pair still writes nearly every link.
+
+4 new tests (`tests/test_v1044_weave_insights_switch.py`).
+
 ## [10.43.0] - 2026-10-30 (seven months of retrieval data, read back)
 
 Three changes that fall out of reading the Epsilon store's own retrieval log

@@ -169,6 +169,8 @@ Any unset phase variable falls back to `MNEMOS_LLM_MODEL`. Each phase call is **
 
 Model families that reject the `temperature` parameter outright (some newer OpenAI-compatible endpoints do) are handled automatically since v10.16.0: on the first rejection `chat()` retries without the parameter and remembers the endpoint+model for the rest of the process. `MNEMOS_LLM_OMIT_TEMPERATURE[_<PHASE>]=1` remains as an explicit override that skips even that first probe.
 
+Phase 3 stores links only. `MNEMOS_WEAVE_STORE_INSIGHTS=1` also stores each accepted pair's one-line insight as a `bridge` memory, capped at `MNEMOS_WEAVE_MAX_INSIGHTS` per run (default 5); off by default since v10.44.0.
+
 Since v10.15.1 every Nyx tunable (clustering thresholds, weave similarity/top-K, call budgets, contradiction gates) is an env-overridable constant in `mnemos/constants.py`, the single settings surface; see that file for the full list of `MNEMOS_*` knobs.
 
 ### NLI decision layer (optional, v10.15+)
