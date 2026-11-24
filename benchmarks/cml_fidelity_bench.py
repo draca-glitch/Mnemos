@@ -24,8 +24,8 @@ MNEMOS_LLM_API_KEY, and MNEMOS_LLM_MODEL (+ optional per-phase overrides)
 drive the provider/model choice. Runs without Mnemos being installed as a
 package, just importable from this repo's root.
 
-Fact extraction and matching are cached by content hash in
-`./cml_fidelity_cache/` so reruns are free.
+Fact extraction and matching are cached by content hash. Cemelification is
+cached by model and prompt contents. All caches live in `./cml_fidelity_cache/`.
 
 Usage:
     python cml_fidelity_bench.py                    # full corpus
@@ -155,13 +155,13 @@ def extract_facts(text: str) -> list:
 
 def cemelify(prose: str) -> str:
     """Prose → CML using the production MERGE_SYSTEM prompt. Cached per model."""
-    h = _hash(prose)
+    user = CEMELIFY_USER_TEMPLATE.format(prose=prose)
+    h = _hash(json.dumps([MERGE_SYSTEM, user]))
     cache_file = _cache_path(f"cml_{_model_tag()}_{h}.json")
     if os.path.exists(cache_file):
         with open(cache_file) as f:
             return json.load(f)["cml"]
 
-    user = CEMELIFY_USER_TEMPLATE.format(prose=prose)
     result = llm_chat(
         [
             {"role": "system", "content": MERGE_SYSTEM},
