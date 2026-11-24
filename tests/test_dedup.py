@@ -9,6 +9,7 @@ distance and blocks only within VEC_DEDUP_MAX_DISTANCE.
 """
 import pytest
 
+from mnemos import core
 from mnemos.core import Mnemos
 from mnemos.storage.sqlite_store import SQLiteStore
 
@@ -42,3 +43,34 @@ def test_near_identical_still_deduped_without_rerank(m):
     # strong signal even without the reranker.
     assert not _stored(b)
     assert "existing_id" in b
+
+
+@pytest.mark.parametrize(("stored", "repeat", "distractor"), [
+    ("F: api listens on port 8080", "F:api uses port 8080", None),
+    ("F:api listens on port 8080", "F: api uses port 8080", None),
+    ("F:my_var is enabled", "F:my_var is on", "F:myXvar is disabled"),
+    ("F:rate%cap is 5", "F:rate%cap has value 5", "F:rateLimitcap is 10"),
+    (r"F:my\path exists", r"F:my\path is present", "F:mypath is missing"),
+])
+def test_cml_subject_lookup(m, monkeypatch, stored, repeat, distractor):
+    # Isolate the CML candidate source from FTS and vector retrieval.
+    monkeypatch.setattr(core, "fts_dedup", lambda *_: [])
+    monkeypatch.setattr(core, "embed", lambda texts, **_: [None] * len(texts))
+    monkeypatch.setenv("MNEMOS_DEDUP_CONFIRM", "nli")
+    monkeypatch.setattr(core.nli, "is_available", lambda: True)
+    candidates = []
+
+    def confirm(_new, existing):
+        candidates.append(existing)
+        return 0.99
+
+    monkeypatch.setattr(core.nli, "bidirectional_entailment", confirm)
+    if distractor:
+        m.store_memory("dev", distractor, skip_dedup=True)
+    expected = m.store_memory("dev", stored, skip_dedup=True)
+
+    result = m.store_memory("dev", repeat)
+
+    assert candidates == [stored]
+    assert result["existing_id"] == expected["id"]
+    assert "cml" in result["methods"]

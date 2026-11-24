@@ -637,9 +637,16 @@ class Mnemos:
         cml_type, subject = _extract_cml_subject(content)
         if cml_type and subject and CML_MODE != "off":
             try:
-                pattern = f"{cml_type}:{subject}%"
+                literal = re.sub(r"([\\%_])", r"\\\1", subject)
+                limit = 5
                 rows = self.store.find_cml_subject_matches(
-                    self.namespace, project, pattern, limit=5)
+                    self.namespace, project, f"{cml_type}:{literal}%", limit=limit)
+                # The documented form has a space after the prefix. Keep
+                # the existing candidate cap across both spellings.
+                if len(rows) < limit:
+                    rows.extend(self.store.find_cml_subject_matches(
+                        self.namespace, project, f"{cml_type}: {literal}%",
+                        limit=limit - len(rows)))
                 for row in rows:
                     mid = row["id"]
                     if mid in candidates:
