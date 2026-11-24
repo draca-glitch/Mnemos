@@ -1509,7 +1509,7 @@ class SQLiteStore(MnemosStore):
         rows = conn.execute(
             "SELECT id, content, project FROM memories "
             "WHERE status='active' AND namespace=? AND project=? "
-            "AND content LIKE ? LIMIT ?",
+            "AND content LIKE ? ESCAPE '\\' LIMIT ?",
             (namespace, project, pattern, limit),
         ).fetchall()
         return [

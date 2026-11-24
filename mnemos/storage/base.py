@@ -338,9 +338,9 @@ class MnemosStore(ABC):
     ) -> list:
         """Find memories whose content starts with a CML subject pattern.
 
-        pattern is a LIKE pattern (e.g. 'D:foo%'). Returns list of
-        dicts with keys: id, content, project. Default implementation
-        returns an empty list.
+        pattern is a LIKE pattern (e.g. 'D:foo%') with backslash as the
+        escape character. Returns a list of dicts with keys: id, content,
+        project. Default implementation returns an empty list.
         """
         return []
 
