@@ -189,7 +189,7 @@ The fact-dense subset is the realistic ceiling for most agent-written memories. 
 3. Fact-extract the CML output
 4. LLM-judge which originals survived via a PRESERVED/DROPPED format
 
-Every LLM call goes through `mnemos.consolidation.llm.chat()`, so the configured `MNEMOS_LLM_MODEL` (and `MNEMOS_LLM_MODEL_MERGE` if set) drive the measurement. Fact extraction is cached by content hash; cemelification and matching are cached per (model, content) so swapping the model invalidates only the relevant cache entries.
+Every LLM call goes through `mnemos.consolidation.llm.chat()`, so the configured `MNEMOS_LLM_MODEL` (and `MNEMOS_LLM_MODEL_MERGE` if set) drive the measurement. Fact extraction and matching are cached by content hash. Cemelification is cached by model and by the rendered system and user prompts, so changing either prompt regenerates the CML output.
 
 ```bash
 # Canonical run (Sonnet 4.6 via DO Gradient in the repo's reference config)
